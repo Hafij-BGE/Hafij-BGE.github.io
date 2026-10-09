@@ -1,8 +1,23 @@
 import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
+import qrcode from 'qrcode-generator';
 
-// Site config (public identifiers, not secrets — data is protected by Firestore rules),
-// or a setup pasted on this device as a fallback.
+// "Add another device": the setup travels in the URL fragment (#setup=…), which browsers never
+// send to any server. Save it on this device, then wipe it from the address bar and history.
+(function takeSetupLink() {
+  const m = location.hash.match(/^#setup=([A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  let ok = false;
+  try {
+    const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    const parsed = parseSetup(decodeURIComponent(escape(atob(b64))));
+    if (parsed) ok = saveSetup(parsed);
+  } catch (e) {}
+  history.replaceState(null, '', location.pathname);
+  if (!ok) setTimeout(() => toast('That setup code could not be read. Try scanning it again.', true), 600);
+})();
+
+// The setup lives only on the owner's devices; the published site carries none.
 const cfg = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {})) || loadSetup();
 const hasCfg = !!cfg;
 
@@ -60,7 +75,14 @@ function boot() {
   store.on('auth', u => { user = u; authKnown = true; if (!u) items = []; render(); });
   store.on('items', list => {
     items = list; byId = Object.fromEntries(list.map(x => [x.id, x]));
-    if (editor) return renderChrome();
+    if (editor) {
+      const cur = byId[editor.item.id];
+      if (!editor.isNew && !editor.warned && cur && editor.origUpdatedAt && cur.updatedAt !== editor.origUpdatedAt) {
+        editor.warned = true;
+        toast('Heads up: this record was just changed on another device.', true);
+      }
+      return renderChrome();
+    }
     render();
   });
   store.on('status', s => { status = s; renderStatus(); });
@@ -301,6 +323,16 @@ function settingsHTML() {
       : `<p class="muted">Records sync live between all devices signed in with this Google account and are stored in your own Firebase project. Only your account can read them. The app also keeps an offline copy on this device so you can work without a connection.</p>
          <button class="btn" data-act="signout">Sign out and erase this device's copy</button>`}
   </section>
+  ${local ? '' : `<section class="card">
+    <h3>Add another device</h3>
+    <p class="muted">Use as many phones, tablets and computers as you like — all stay in sync live. To set one up, show the code here and scan it with the other device's camera, then sign in with Google there.</p>
+    <div class="btnrow">
+      <button class="btn primary" data-act="showqr">Show setup code</button>
+      <button class="btn" data-act="copysetup">${icon('copy')} Copy setup link</button>
+    </div>
+    <div id="qrbox" class="qrbox" hidden></div>
+    <p class="small muted">The code holds your project's connection details — not your password and not your data, which only your Google account can open. Share it only with your own devices.</p>
+  </section>`}
   <section class="card">
     <h3>Install</h3>
     <p class="muted">Use the same app on your phone and computer.</p>
@@ -343,7 +375,7 @@ function openEditorFromRoute() {
     if (!src) { if (items.length) go(`#/${r.section.id}/${r.kind}`); return; }
     item = structuredClone(src);
   }
-  editor = { kind: r.kind, item, isNew, newPhotos: [], removedPhotos: [], dirty: false };
+  editor = { kind: r.kind, item, isNew, newPhotos: [], removedPhotos: [], dirty: false, origUpdatedAt: item.updatedAt || null };
   sheet.innerHTML = editorHTML();
   sheet.hidden = false;
   document.body.classList.add('noscroll');
@@ -438,6 +470,13 @@ function readForm() {
 function saveEditor() {
   const data = readForm();
   if (!data.title) { toast('Please add a title first.', true); app.querySelector('#edform [name="title"]').focus(); return; }
+  // Several devices at once: never silently overwrite a change made elsewhere.
+  if (!editor.isNew && !(pendingOpen && pendingOpen.id === data.id)) {
+    const cur = byId[data.id];
+    if (!cur) { if (!confirm('This record was deleted on another device. Save it again?')) return; }
+    else if (editor.origUpdatedAt && cur.updatedAt !== editor.origUpdatedAt &&
+      !confirm('This record was changed on another device while you were editing. Save your version and replace that change?')) return;
+  }
   const photos = (data.photos || []).filter(id => !editor.removedPhotos.includes(id));
   for (const d of editor.newPhotos) { const pid = store.savePhoto(d, data.id); if (pid) photos.push(pid); }
   editor.removedPhotos.forEach(id => store.removePhoto(id));
@@ -519,6 +558,20 @@ app.addEventListener('click', async e => {
       if (deferredInstall) { deferredInstall.prompt(); deferredInstall = null; }
       break;
     case 'export': exportData(); break;
+    case 'showqr': {
+      const box = app.querySelector('#qrbox');
+      if (!box.hidden) { box.hidden = true; box.innerHTML = ''; t.textContent = 'Show setup code'; break; }
+      const q = qrcode(0, 'M'); q.addData(setupLink()); q.make();
+      box.innerHTML = q.createSvgTag({ cellSize: 5, margin: 3, scalable: true }) + '<p class="small">Scan with the new device\'s camera. Hides itself in 2 minutes.</p>';
+      box.hidden = false; t.textContent = 'Hide code';
+      clearTimeout(window.__qrT);
+      window.__qrT = setTimeout(() => { const b = app.querySelector('#qrbox'); if (b) { b.hidden = true; b.innerHTML = ''; } const bt = app.querySelector('[data-act=showqr]'); if (bt) bt.textContent = 'Show setup code'; }, 120000);
+      break;
+    }
+    case 'copysetup':
+      try { await navigator.clipboard.writeText(setupLink()); toast('Setup link copied. Paste it only on your own devices.'); }
+      catch (e) { toast('Copying was blocked by the browser. Use the setup code instead.', true); }
+      break;
     case 'connect': {
       const parsed = parseSetup(app.querySelector('#setupText').value);
       if (!parsed) return toast("That doesn't look like a complete Firebase config. Paste the whole { … } block.", true);
@@ -567,6 +620,11 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
   if (e.key === 'Escape' && editor) { if (!editor.dirty || confirm('Discard your changes?')) closeEditor(); }
 });
+
+function setupLink() {
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.origin}${location.pathname}#setup=${b64}`;
+}
 
 /* ---------------- move demo data into the synced account ---------------- */
 let migrationAsked = false;

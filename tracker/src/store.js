@@ -148,6 +148,12 @@ export class LocalStore extends Emitter {
   constructor() {
     super();
     this.mode = 'local';
+    // Keep several tabs on this device in step (cloud mode does this through Firestore).
+    addEventListener('storage', e => {
+      if (e.key !== 'rl.items') return;
+      try { this.items = JSON.parse(e.newValue || '{}'); } catch (err) { return; }
+      this.emit('items', Object.entries(this.items).map(([id, v]) => ({ id, ...v })));
+    });
     this.user = { uid: 'local', name: '', email: 'Stored in this browser only' };
     this.items = {};
     try { this.items = JSON.parse(localStorage.getItem('rl.items') || '{}'); } catch (e) {}
