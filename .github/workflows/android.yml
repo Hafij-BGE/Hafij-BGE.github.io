@@ -1,0 +1,80 @@
+name: Build Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare signing key
+        id: key
+        env:
+          RL_SIGNING: ${{ secrets.RL_SIGNING }}
+        run: |
+          cd android
+          if [ -n "$RL_SIGNING" ]; then
+            PW="${RL_SIGNING%%:*}"
+            echo "::add-mask::$PW"
+            printf '%s' "${RL_SIGNING#*:}" | base64 -d > release.keystore
+            echo "KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            PW="temp-$(date +%s)"
+            keytool -genkeypair -keystore release.keystore -storetype PKCS12 -alias researchlog \
+              -keyalg RSA -keysize 2048 -validity 365 -storepass "$PW" -keypass "$PW" -dname "CN=Temporary"
+            echo "KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RL_SIGNING secret is not set, so this APK uses a temporary key and is not published as a release."
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Collect APK
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk research-log.apk
+          keytool -printcert -jarfile research-log.apk | grep -i sha256 || true
+          ls -la research-log.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: research-log-apk
+          path: research-log.apk
+
+      - name: Publish release
+        if: steps.key.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ github.run_number }}
+          name: Research Log for Android (build ${{ github.run_number }})
+          body: |
+            Download **research-log.apk** below and open it on your Android phone to install.
+            The app opens https://hafij-bge.github.io/tracker/ full-screen, so it always matches the website.
+          files: research-log.apk
+          make_latest: true

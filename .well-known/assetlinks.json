@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "io.github.hafij_bge.researchlog",
+    "sha256_cert_fingerprints": ["62:A0:F3:52:20:F3:CF:44:DE:F0:7A:7E:A2:40:14:9E:61:48:A2:A8:8F:3E:1B:D0:D0:65:71:59:1D:A5:47:16"]
+  }
+}]

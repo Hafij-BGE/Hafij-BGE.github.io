@@ -1,0 +1,203 @@
+// Every record type the app tracks, and how it is shown and edited.
+// Field types: text, textarea, date, select, number, range, tags, ref, check, url, photos
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+export const SECTIONS = [
+  { id: 'lab', label: 'Lab', kinds: ['experiment', 'protocol', 'inventory'] },
+  { id: 'research', label: 'Research', kinds: ['project', 'task', 'paper'] },
+  { id: 'profile', label: 'Profile', kinds: ['publication', 'talk', 'award'] },
+];
+
+export const KINDS = {
+  experiment: {
+    label: 'Experiment', plural: 'Experiments', color: 'var(--wet)',
+    sort: (a, b) => (b.date || '').localeCompare(a.date || ''),
+    sub: (x, ctx) => [x.date, ctx.projectName(x.project)].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', required: true, placeholder: 'e.g. Fowlpox passage 6 in duck eggs' },
+      { key: 'date', label: 'Date', type: 'date', default: today },
+      { key: 'status', label: 'Status', type: 'select', options: ['Planned', 'In progress', 'Completed', 'Failed', 'Repeated'], default: () => 'In progress' },
+      { key: 'project', label: 'Project', type: 'ref', ref: 'project' },
+      { key: 'protocol', label: 'Protocol used', type: 'ref', ref: 'protocol' },
+      { key: 'objective', label: 'Objective', type: 'textarea' },
+      { key: 'materials', label: 'Materials & reagents', type: 'textarea' },
+      { key: 'procedure', label: 'Procedure', type: 'textarea', rows: 6 },
+      { key: 'results', label: 'Results / observations', type: 'textarea', rows: 6 },
+      { key: 'conclusion', label: 'Conclusion & next steps', type: 'textarea' },
+      { key: 'photos', label: 'Photos (gels, plates, setups)', type: 'photos' },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  protocol: {
+    label: 'Protocol', plural: 'Protocols', color: 'var(--wet)',
+    sort: (a, b) => (a.title || '').localeCompare(b.title || ''),
+    sub: x => [x.category, x.version && 'v' + x.version].filter(Boolean).join(' · '),
+    fields: [
+      { key: 'title', label: 'Protocol name', type: 'text', required: true, placeholder: 'e.g. Agarose gel electrophoresis (1%)' },
+      { key: 'category', label: 'Category', type: 'select', options: ['Molecular biology', 'Microbiology', 'Virology', 'Immunoassay', 'Biochemistry', 'Analytical', 'Computational', 'Other'] },
+      { key: 'version', label: 'Version', type: 'text', placeholder: '1.0' },
+      { key: 'purpose', label: 'Purpose', type: 'textarea' },
+      { key: 'materials', label: 'Materials & reagents', type: 'textarea' },
+      { key: 'steps', label: 'Steps', type: 'textarea', rows: 8 },
+      { key: 'notes', label: 'Notes & troubleshooting', type: 'textarea' },
+      { key: 'source', label: 'Source / reference', type: 'url' },
+      { key: 'photos', label: 'Photos', type: 'photos' },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  inventory: {
+    label: 'Sample / reagent', plural: 'Inventory', color: 'var(--wet)',
+    sort: (a, b) => (a.title || '').localeCompare(b.title || ''),
+    sub: x => [x.type, x.quantity, x.location].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    warn: x => {
+      if (!x.expiry || x.status === 'Used up') return null;
+      const days = Math.round((new Date(x.expiry) - new Date(today())) / 864e5);
+      if (days < 0) return 'Expired';
+      if (days <= 30) return `Expires in ${days} d`;
+      return null;
+    },
+    fields: [
+      { key: 'title', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Taq polymerase / Serum sample S12' },
+      { key: 'type', label: 'Type', type: 'select', options: ['Sample', 'Reagent', 'Kit', 'Antibody', 'Primer', 'Strain / cell line', 'Consumable', 'Other'] },
+      { key: 'quantity', label: 'Quantity', type: 'text', placeholder: 'e.g. 5 mL, 2 tubes' },
+      { key: 'location', label: 'Storage location', type: 'text', placeholder: 'e.g. −20 °C, rack 2, box B' },
+      { key: 'lot', label: 'Lot / batch', type: 'text' },
+      { key: 'received', label: 'Received', type: 'date' },
+      { key: 'expiry', label: 'Expiry', type: 'date' },
+      { key: 'status', label: 'Status', type: 'select', options: ['In stock', 'Low', 'Used up', 'Expired'], default: () => 'In stock' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+  project: {
+    label: 'Project', plural: 'Projects', color: 'var(--dry)',
+    sort: (a, b) => statusRank(a.status) - statusRank(b.status) || (a.title || '').localeCompare(b.title || ''),
+    sub: x => [x.area, x.target && 'target ' + x.target].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    progress: x => Number(x.progress) || 0,
+    fields: [
+      { key: 'title', label: 'Project name', type: 'text', required: true },
+      { key: 'status', label: 'Status', type: 'select', options: ['Idea', 'Active', 'On hold', 'Done'], default: () => 'Active' },
+      { key: 'area', label: 'Area', type: 'select', options: ['Wet lab', 'Computational', 'Both'] },
+      { key: 'progress', label: 'Progress', type: 'range', default: () => 0 },
+      { key: 'start', label: 'Start date', type: 'date' },
+      { key: 'target', label: 'Target date', type: 'date' },
+      { key: 'description', label: 'Description', type: 'textarea', rows: 5 },
+      { key: 'links', label: 'Links (repo, docs, data)', type: 'textarea', rows: 3 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  task: {
+    label: 'Task', plural: 'Tasks', color: 'var(--dry)',
+    sort: (a, b) => (a.done - b.done) || (a.due || '9999').localeCompare(b.due || '9999') || prioRank(a.priority) - prioRank(b.priority),
+    sub: (x, ctx) => [x.due && dueLabel(x.due), ctx.projectName(x.project)].filter(Boolean).join(' · '),
+    badge: x => (x.priority === 'High' ? 'High' : null),
+    checkable: true,
+    fields: [
+      { key: 'title', label: 'Task', type: 'text', required: true },
+      { key: 'due', label: 'Due date', type: 'date' },
+      { key: 'priority', label: 'Priority', type: 'select', options: ['Low', 'Medium', 'High'], default: () => 'Medium' },
+      { key: 'project', label: 'Project', type: 'ref', ref: 'project' },
+      { key: 'done', label: 'Done', type: 'check' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+  paper: {
+    label: 'Paper', plural: 'Reading list', color: 'var(--dry)',
+    sort: (a, b) => readRank(a.status) - readRank(b.status) || (b.year || 0) - (a.year || 0),
+    sub: x => [x.authors, x.year, x.journal].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', required: true },
+      { key: 'authors', label: 'Authors', type: 'text' },
+      { key: 'year', label: 'Year', type: 'number' },
+      { key: 'journal', label: 'Journal', type: 'text' },
+      { key: 'doi', label: 'DOI or link', type: 'url', placeholder: '10.xxxx/… or https://…' },
+      { key: 'status', label: 'Status', type: 'select', options: ['To read', 'Reading', 'Read'], default: () => 'To read' },
+      { key: 'project', label: 'Relevant to project', type: 'ref', ref: 'project' },
+      { key: 'notes', label: 'Notes & key points', type: 'textarea', rows: 6 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  publication: {
+    label: 'Publication', plural: 'Publications', color: 'var(--accent)',
+    sort: (a, b) => (b.year || 0) - (a.year || 0),
+    sub: x => [x.venue, x.year].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', required: true },
+      { key: 'authors', label: 'Authors', type: 'text' },
+      { key: 'venue', label: 'Journal / venue', type: 'text' },
+      { key: 'year', label: 'Year', type: 'number' },
+      { key: 'type', label: 'Type', type: 'select', options: ['Article', 'Review', 'Preprint', 'Conference paper', 'Book chapter', 'Thesis'] },
+      { key: 'status', label: 'Status', type: 'select', options: ['Idea', 'Drafting', 'Submitted', 'Under review', 'Revision', 'Accepted', 'Published'], default: () => 'Drafting' },
+      { key: 'doi', label: 'DOI or link', type: 'url' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+  talk: {
+    label: 'Talk / poster', plural: 'Talks & posters', color: 'var(--accent)',
+    sort: (a, b) => (b.date || '').localeCompare(a.date || ''),
+    sub: x => [x.type, x.event, x.date].filter(Boolean).join(' · '),
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', required: true },
+      { key: 'type', label: 'Type', type: 'select', options: ['Oral', 'Poster', 'Invited talk', 'Seminar', 'Workshop'] },
+      { key: 'event', label: 'Event', type: 'text' },
+      { key: 'location', label: 'Location', type: 'text' },
+      { key: 'date', label: 'Date', type: 'date' },
+      { key: 'coauthors', label: 'Co-authors', type: 'text' },
+      { key: 'link', label: 'Link', type: 'url' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+  award: {
+    label: 'Award', plural: 'Awards', color: 'var(--accent)',
+    sort: (a, b) => (b.year || 0) - (a.year || 0),
+    sub: x => [x.issuer, x.year].filter(Boolean).join(' · '),
+    fields: [
+      { key: 'title', label: 'Award / scholarship', type: 'text', required: true },
+      { key: 'issuer', label: 'Issued by', type: 'text' },
+      { key: 'year', label: 'Year', type: 'number' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+};
+
+function statusRank(s) { return { Active: 0, Idea: 1, 'On hold': 2, Done: 3 }[s] ?? 4; }
+function prioRank(p) { return { High: 0, Medium: 1, Low: 2 }[p] ?? 3; }
+function readRank(s) { return { Reading: 0, 'To read': 1, Read: 2 }[s] ?? 3; }
+
+export function dueLabel(due) {
+  const days = Math.round((new Date(due) - new Date(today())) / 864e5);
+  if (days < 0) return `${-days} d overdue`;
+  if (days === 0) return 'Due today';
+  if (days === 1) return 'Due tomorrow';
+  if (days <= 7) return `Due in ${days} d`;
+  return 'Due ' + due;
+}
+
+export function textOf(item) {
+  const k = KINDS[item.kind];
+  if (!k) return '';
+  return k.fields.filter(f => ['text', 'textarea', 'url', 'select'].includes(f.type))
+    .map(f => item[f.key] || '').concat(item.tags || []).join(' ').toLowerCase();
+}
+
+// One-tap import of what is already on the CV, so the profile isn't empty on day one.
+export const CV_SEED = [
+  { kind: 'publication', title: 'Phyllanthus emblica (Amla) methanolic extract regulates multiple checkpoints in 15-lipoxygenase mediated inflammopathies: computational simulation and in vitro evidence', year: 2023, type: 'Article', status: 'Published', doi: 'https://doi.org/10.1016/j.jsps.2023.06.014' },
+  { kind: 'publication', title: "In vitro and in silico investigation of garlic's (Allium sativum) bioactivity against 15-lipoxygenase mediated inflammopathies", year: 2023, type: 'Article', status: 'Published', doi: 'https://doi.org/10.34172/jhp.2023.31' },
+  { kind: 'publication', title: 'Molecular optimization, docking, and dynamic simulation profiling of selective aromatic phytochemical ligands in blocking the SARS-CoV-2 S protein attachment to ACE2 receptor', year: 2021, type: 'Article', status: 'Published', doi: 'https://doi.org/10.5455/javar.2021.h481' },
+  { kind: 'talk', title: 'Integrated CRISPR–microfluidic platform for automated point-of-care pathogen detection', type: 'Oral', event: 'DEUISGR 2025 (December 2025)', location: 'Dokuz Eylül University, İzmir', coauthors: 'Ö. Cihanbeğendi' },
+  { kind: 'talk', title: 'Molecular docking of phytochemicals as potential inhibitors of breast cancer targeting HER-2', type: 'Poster', event: 'IPPC 2020', notes: 'Outstanding Poster, 243 submissions (Life Science)' },
+  { kind: 'award', title: 'Türkiye Bursları Scholarship', issuer: 'Türkiye Bursları', year: 2024 },
+  { kind: 'award', title: 'National Science and Technology (NST) Fellowship', issuer: 'Government of Bangladesh', year: 2023 },
+  { kind: 'award', title: 'Merit Scholarships (2018, 2019, 2021, 2022)', issuer: 'Khulna University', year: 2022 },
+  { kind: 'project', title: 'Bacterial HLA ligands in tumour immunopeptidomes (MSc thesis)', status: 'Active', area: 'Computational', progress: 80, links: 'https://github.com/Hafij-BGE/microbial-immunopeptidome-attribution' },
+  { kind: 'project', title: 'SH3 mechanism atlas — phase 2 external validation', status: 'Active', area: 'Computational', progress: 50, links: 'https://github.com/Hafij-BGE/sh3-mechanism' },
+  { kind: 'project', title: 'PXD024871 sequence-only CNN benchmark', status: 'Done', area: 'Computational', progress: 100, links: 'https://github.com/Hafij-BGE/PXD024871_mapping' },
+  { kind: 'project', title: 'Deep learning prediction of protein–protein interactions', status: 'Active', area: 'Computational', progress: 10 },
+  { kind: 'project', title: 'Attenuated fowlpox vaccine from a wild isolate (MSc thesis, BAU)', status: 'Done', area: 'Wet lab', progress: 100 },
+];
