@@ -154,6 +154,18 @@
   nav.jump a { color: var(--ink); text-decoration-color: var(--rule); }
   nav.jump a:hover { text-decoration-color: var(--link); }
 
+  nav.links { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 10px; }
+  nav.links a {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .82rem;
+    padding: 5px 11px;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  nav.links a:hover { color: var(--link); border-color: var(--link); }
+
   /* ---------- Sections ---------- */
   main section {
     display: grid;
@@ -292,6 +304,14 @@
           <a href="#publications">Publications</a>
           <a href="#education">Education</a>
           <a href="#contact">Contact</a>
+        </nav>
+
+        <nav class="links" aria-label="Profiles">
+          <a href="https://scholar.google.com/citations?user=DysvV2AAAAAJ&hl=en">Google Scholar</a>
+          <a href="https://www.scopus.com/authid/detail.uri?authorId=57310313500">Scopus</a>
+          <a href="https://orcid.org/0000-0003-4031-6475">ORCID</a>
+          <a href="https://www.linkedin.com/in/md-hafijur-rahman-90ab85139">LinkedIn</a>
+          <a href="https://github.com/Hafij-BGE">GitHub</a>
         </nav>
       </div>
       <img class="portrait" src="photo.jpg" alt="Portrait of Md. Hafijur Rahman" width="359" height="431">
@@ -520,10 +540,14 @@
     <h2 id="contact-h">Contact</h2>
     <div class="body">
       <div class="contact">
-        <a href="mailto:hafijurrahman.hr10@gmail.com">hafijurrahman.hr10@gmail.com</a>
-        <a href="https://orcid.org/0000-0003-4031-6475">ORCID 0000-0003-4031-6475</a>
+        <a href="mailto:hafijurrahman.hr10@gmail.com">Email</a>
+        <a href="https://scholar.google.com/citations?user=DysvV2AAAAAJ&hl=en">Google Scholar</a>
+        <a href="https://www.scopus.com/authid/detail.uri?authorId=57310313500">Scopus</a>
+        <a href="https://orcid.org/0000-0003-4031-6475">ORCID</a>
+        <a href="https://www.linkedin.com/in/md-hafijur-rahman-90ab85139">LinkedIn</a>
         <a href="https://github.com/Hafij-BGE">GitHub</a>
       </div>
+      <p class="meta" style="margin-top:14px">hafijurrahman.hr10@gmail.com · ORCID 0000-0003-4031-6475</p>
     </div>
   </section>
 
