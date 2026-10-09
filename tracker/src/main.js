@@ -17,8 +17,10 @@ import qrcode from 'qrcode-generator';
   if (!ok) setTimeout(() => toast('That setup code could not be read. Try scanning it again.', true), 600);
 })();
 
-// The setup lives only on the owner's devices; the published site carries none.
-const cfg = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {})) || loadSetup();
+// Built-in project identifiers (not secrets: data is locked to the owner's accounts by Firestore rules,
+// and the key only works from the owner's sites). A per-device setup remains as a fallback.
+const builtIn = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {}));
+const cfg = builtIn || loadSetup();
 const hasCfg = !!cfg;
 
 let store;
@@ -323,7 +325,10 @@ function settingsHTML() {
       : `<p class="muted">Records sync live between all devices signed in with this Google account and are stored in your own Firebase project. Only your account can read them. The app also keeps an offline copy on this device so you can work without a connection.</p>
          <button class="btn" data-act="signout">Sign out and erase this device's copy</button>`}
   </section>
-  ${local ? '' : `<section class="card">
+  ${local ? '' : builtIn ? `<section class="card">
+    <h3>Use on other devices</h3>
+    <p class="muted">Open <b>hafij-bge.github.io/tracker</b> on any phone, tablet or computer and sign in with Google. Everything stays in sync live.</p>
+  </section>` : `<section class="card">
     <h3>Add another device</h3>
     <p class="muted">Use as many phones, tablets and computers as you like — all stay in sync live. To set one up, show the code here and scan it with the other device's camera, then sign in with Google there.</p>
     <div class="btnrow">
