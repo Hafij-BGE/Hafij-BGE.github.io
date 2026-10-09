@@ -1,6 +1,7 @@
 import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
 import qrcode from 'qrcode-generator';
+import BUNDLED_CONFIG from './firebase-config.js';
 
 // "Add another device": the setup travels in the URL fragment (#setup=…), which browsers never
 // send to any server. Save it on this device, then wipe it from the address bar and history.
@@ -19,7 +20,7 @@ import qrcode from 'qrcode-generator';
 
 // Built-in project identifiers (not secrets: data is locked to the owner's accounts by Firestore rules,
 // and the key only works from the owner's sites). A per-device setup remains as a fallback.
-const builtIn = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {}));
+const builtIn = parseSetup(JSON.stringify(BUNDLED_CONFIG)) || parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {}));
 const cfg = builtIn || loadSetup();
 const hasCfg = !!cfg;
 
@@ -99,13 +100,26 @@ function boot() {
   if (store.mode === 'cloud') store.on('items', () => offerMigration());
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; render(); });
   if ('serviceWorker' in navigator) {
-    // When a newer version of the app is installed, switch to it straight away.
-    const hadController = !!navigator.serviceWorker.controller;
-    let reloaded = false;
+    // When a newer version of the app is installed, switch to it straight away — unless a record is
+    // open for editing, in which case switch the next time the app comes back to the front.
+    // (The very first install also fires controllerchange; there is nothing newer to load then.)
+    let controller = navigator.serviceWorker.controller, updateReady = false, reloaded = false;
+    const applyUpdate = () => { if (updateReady && !reloaded && !editor) { reloaded = true; location.reload(); } };
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (hadController && !reloaded && !editor) { reloaded = true; location.reload(); }
+      if (controller) updateReady = true;
+      controller = navigator.serviceWorker.controller;
+      applyUpdate();
     });
-    navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // The Android app and home-screen installs usually resume the open page instead of reloading it,
+      // so also look for a newer version whenever the app comes back to the front, and every 30 minutes.
+      const check = () => reg.update().catch(() => {});
+      check();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') { applyUpdate(); check(); }
+      });
+      setInterval(check, 30 * 60 * 1000);
+    }).catch(() => {});
   }
   render();
 }
