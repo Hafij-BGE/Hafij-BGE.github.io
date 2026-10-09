@@ -392,3 +392,35 @@ pre.plain { margin: 0; background: transparent; border: 0; padding: 0; font-size
 .refs .ract { position: absolute; right: 0; top: 2px; display: flex; }
 .rfq { width: 100%; margin-top: 12px; }
 .vlist { margin: 4px 0 0; padding-left: 1.2em; } .vlist li { margin: 4px 0; overflow-wrap: anywhere; } ul.vlist { list-style: none; padding-left: 0; }
+/* Ask AI */
+.aibtn { color: var(--accent); }
+.aiempty { text-align: center; padding: 28px 18px; } .aiempty > .ic { width: 34px; height: 34px; color: var(--accent); }
+.aictx { display: grid; gap: 10px; }
+.aikinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.aikinds .chip { padding: 5px 11px; font-size: .82rem; }
+.aifocus, .aifile { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 !important; }
+.aifile .ic { width: 18px; height: 18px; color: var(--muted); }
+.aichat { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 14px; min-height: 120px; }
+.aimsg { max-width: min(760px, 100%); border-radius: 16px; padding: 10px 14px; overflow-wrap: anywhere; }
+.aimsg.me { align-self: flex-end; background: var(--dry); color: #fff; border-bottom-right-radius: 4px; max-width: 85%; }
+.aimsg.bot, .aimsg.data { align-self: flex-start; background: var(--card); border: 1px solid var(--rule); border-bottom-left-radius: 4px; }
+.aimsg.data { border-left: 3px solid var(--wet); width: 100%; } .aimsg.data p { margin: 4px 0 8px; } .aimsg.data td, .aimsg.data th { font-size: .85rem; white-space: nowrap; }
+.aimsg.err { align-self: flex-start; background: color-mix(in srgb, var(--red) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
+.aimsg.err ul { margin: 6px 0; padding-left: 1.2em; }
+.aimeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0 0 !important; font-size: .76rem; color: var(--muted); }
+.aimeta .ic { width: 14px; height: 14px; color: var(--accent); }
+.aiswitch { margin: 2px 0 0 !important; }
+.aihint { padding: 6px 4px; } .aihint ul { margin: 4px 0; padding-left: 1.2em; } .aihint li { margin: 4px 0; }
+.aidots { display: inline-flex; gap: 4px; vertical-align: middle; } .aidots i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse .8s infinite alternate; }
+.aidots i:nth-child(2) { animation-delay: .2s; } .aidots i:nth-child(3) { animation-delay: .4s; }
+.aimsg.busy { display: flex; align-items: center; gap: 10px; }
+.aiform { position: sticky; bottom: calc(var(--nav-h) + 8px + env(safe-area-inset-bottom)); display: flex; align-items: flex-end; gap: 8px; padding: 8px; border-radius: 16px; background: var(--card); border: 1px solid var(--rule); box-shadow: 0 8px 24px -12px var(--shadow); z-index: 5; }
+@media (min-width: 900px) { .aiform { bottom: 16px; } }
+.aiform textarea { flex: 1; min-height: 42px; max-height: 200px; resize: none; border: 0; background: transparent; padding: 10px 6px; font: inherit; line-height: 1.4; outline: none; }
+.aichans { margin-top: 10px; } .chdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--muted); }
+.chdot.g { background: var(--wet); } .chdot.a { background: var(--amber); } .chdot.r { background: var(--red); }
+.chans .row { align-items: flex-start; } .chnum { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: .8rem; font-weight: 700; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-top: 2px; }
+.chans .rowmain .s { white-space: normal; } .chans .badge { white-space: normal; display: inline-block; margin-top: 4px; }
+.iconbtn[disabled] { opacity: .3; cursor: default; }
+.rowflex { display: flex; gap: 8px; } .rowflex input { flex: 1; min-width: 0; }
+.errtext { color: var(--red); }

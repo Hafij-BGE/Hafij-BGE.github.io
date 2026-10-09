@@ -6,6 +6,7 @@ import {
 } from './files.js';
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
 import { LINK_TYPES, linkTypeLabel, guessLink, linkHref, formatRef, sameRef, lookupDoi, cleanDoi, parseBib, parseRis, parsePasted, toBib, toRis, dataStatement } from './refs.js';
+import { PROVIDERS, askChain, listModels, pickDefault, aiState, restingUntil, clearRest, parseDelimited, describe, describeText, fmtNum } from './ai.js';
 import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
@@ -133,7 +134,7 @@ addEventListener('hashchange', () => { openEditorFromRoute(); render(); });
 /* ---------------- boot ---------------- */
 function boot() {
   store = hasCfg ? new CloudStore(cfg) : new LocalStore();
-  store.on('auth', u => { user = u; authKnown = true; if (!u) items = []; render(); if (u && store.mode === 'cloud') loadSharing(); });
+  store.on('auth', u => { user = u; authKnown = true; if (!u) items = []; render(); if (u && store.mode === 'cloud') { loadSharing(); loadAi(); } });
   store.on('items', list => {
     items = list; byId = Object.fromEntries(list.map(x => [x.id, x]));
     if (editor) {
@@ -194,12 +195,14 @@ function render() {
   if (r.ws) html = workspaceHTML(r);
   else if (r.section) html = sectionHTML(r);
   else if (r.view === 'search') html = searchHTML();
+  else if (r.view === 'ai') html = aiHTML();
   else if (r.view === 'settings') { html = settingsHTML(); setTimeout(renderClaudeCard, 0); }
   else html = homeHTML();
   view.innerHTML = html;
   view.scrollTop = 0;
   if (ui.scrollTo) { const el = view.querySelector('#' + ui.scrollTo); ui.scrollTo = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30); }
   if (r.view === 'search') { const q = view.querySelector('#q'); q && q.focus(); }
+  if (r.view === 'ai') { const q = view.querySelector('#aiq'); if (q && !('ontouchstart' in window)) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   const fab = app.querySelector('#fab');
   fab.hidden = !r.section || !!r.ws;
   if (r.section) fab.setAttribute('aria-label', 'Add ' + KINDS[r.kind].label.toLowerCase());
@@ -209,7 +212,7 @@ function render() {
 function renderChrome() {
   const r = route();
   app.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === (r.section ? r.section.id : r.view)));
-  const titles = { home: 'Research Log', search: 'Search', settings: 'Settings' };
+  const titles = { home: 'Research Log', search: 'Search', settings: 'Settings', ai: 'Ask AI' };
   app.querySelector('#title').textContent = r.ws ? WS[r.wsKind].title : r.section ? r.section.label : titles[r.view] || 'Research Log';
   renderStatus();
 }
@@ -236,6 +239,7 @@ function shellHTML() {
       <header class="appbar">
         <h1 id="title">Research Log</h1>
         <span id="sync" class="sync"></span>
+        <a class="iconbtn aibtn" href="#/ai" aria-label="Ask AI">${icon('spark')}</a>
         <a class="iconbtn" href="#/search" aria-label="Search">${icon('search')}</a>
       </header>
       <main id="view"></main>
@@ -282,6 +286,7 @@ function homeHTML() {
   <div class="quick">
     ${[['lab', 'experiment', 'Experiment'], ['research', 'task', 'Task'], ['phd', 'application', 'Application'], ['research', 'article', 'Article'], ['lab', 'inventory', 'Sample'], ['research', 'paper', 'Paper']]
       .map(([s, k, l]) => `<a class="qbtn" href="#/${s}/${k}/new" style="--c:${KINDS[k].color}">${icon('plus')}${l}</a>`).join('')}
+    <a class="qbtn" href="#/ai" style="--c:var(--dry)">${icon('spark')}Ask AI</a>
     <a class="qbtn" href="#/settings" data-scroll="claude" style="--c:var(--accent)">${icon('spark')}With Claude</a>
   </div>
   ${items.length === 0 ? `<section class="card welcome">
@@ -503,6 +508,7 @@ function wsHeadHTML(r, a, own) {
     <div class="btnrow">
       <a class="btn primary" href="${r.base}/~e/${a.kind}/${a.id}">${icon('edit')} Details</a>
       ${btns}${zipBtn}
+      <a class="btn" href="#/ai" data-aifocus="${a.id}">${icon('spark')} Ask AI</a>
     </div>
   </section>`;
   if (a.kind === 'article') {
@@ -1306,6 +1312,224 @@ function addRepoAsProject(name) {
   toast(`Added ${r.name} to your projects`);
 }
 
+/* ---------------- Ask AI ---------------- */
+let aiCfg = null;
+const AI_KINDS_DEFAULT = ['project', 'article', 'task', 'application', 'professor', 'experiment', 'publication'];
+ui.ai = { msgs: [], kinds: null, priv: true, file: null, focus: null, busy: false, draft: '' };
+async function loadAi() {
+  try { aiCfg = { channels: [], ...((await store.getMeta('ai')) || {}) }; } catch (e) { aiCfg = { channels: [] }; }
+  if (route().view === 'settings') renderAiCard();
+  if (route().view === 'ai') render();
+}
+async function saveAi() { await store.setMeta('ai', aiCfg); renderAiCard(); }
+const chName = c => c.label || PROVIDERS[c.provider].name;
+const hhmm = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function chStatus(c) {
+  if (c.enabled === false) return ['n', 'Off'];
+  const until = restingUntil(c.id), st = aiState()[c.id] || {};
+  if (until) return ['a', `Resting until ${new Date(until).toDateString() === new Date().toDateString() ? hhmm(until) : new Date(until).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}${st.error ? ' — ' + st.error : ''}`];
+  if (st.error && st.errAt > (st.last || 0)) return ['r', st.error];
+  return ['g', st.last ? `Ready · last answered ${hhmm(st.last)}` : 'Ready'];
+}
+
+function aiCardInner() {
+  if (store.mode !== 'cloud') return `<h3>${icon('spark')} AI channels</h3><p class="muted">Sign in with Google to set up AI.</p>`;
+  if (!aiCfg) return `<h3>${icon('spark')} AI channels</h3><p class="small muted">Loading…</p>`;
+  const list = aiCfg.channels;
+  return `<h3>${icon('spark')} AI channels</h3>
+    <p class="muted">Questions go to the first channel. When it hits its limit or fails, the next one answers automatically, and a resting channel is used again once its limit resets. Free keys:
+      ${Object.entries(PROVIDERS).map(([k, p]) => `<a href="${p.site}" target="_blank" rel="noopener">${esc(p.name)}</a>`).join(' · ')}.</p>
+    ${list.length ? `<ol class="rows chans">${list.map((c, i) => { const [cls, txt] = chStatus(c); return `<li class="row">
+      <span class="chnum">${i + 1}</span>
+      <span class="rowmain"><span class="t">${esc(chName(c))}</span><span class="s">${esc(c.model || 'no model chosen')}</span>
+        <span class="s"><span class="badge ${cls}">${esc(txt)}</span></span></span>
+      <span class="tail">
+        <button type="button" class="iconbtn sm" data-act="ai-up" data-id="${c.id}" aria-label="Move up" ${i ? '' : 'disabled'}>↑</button>
+        <button type="button" class="iconbtn sm" data-act="ai-down" data-id="${c.id}" aria-label="Move down" ${i < list.length - 1 ? '' : 'disabled'}>↓</button>
+        <button type="button" class="iconbtn sm" data-act="ai-edit" data-id="${c.id}" aria-label="Edit channel">${icon('edit')}</button>
+        <button type="button" class="iconbtn sm" data-act="ai-del" data-id="${c.id}" aria-label="Remove channel">${icon('trash')}</button>
+      </span></li>`; }).join('')}</ol>` : ''}
+    <div class="btnrow"><button type="button" class="btn primary" data-act="ai-add">${icon('plus')} Add channel</button>
+      ${list.length ? `<a class="btn" href="#/ai">${icon('spark')} Open Ask AI</a>` : ''}</div>
+    <p class="small muted">Keys are kept in your private account settings (synced to your devices) and are sent only to their own provider. Free plans may use what you send to improve their models — the Private switch on the Ask AI page keeps notes, emails and raw data out.</p>`;
+}
+function renderAiCard() { const el = app.querySelector('#aiCard'); if (el) el.innerHTML = aiCardInner(); }
+
+function channelForm(id) {
+  const c = aiCfg.channels.find(x => x.id === id) || { id: newId(), provider: 'openrouter', key: '', model: '', label: '', enabled: true };
+  const isNew = !aiCfg.channels.some(x => x.id === c.id);
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>${isNew ? 'Add AI channel' : 'AI channel'}</h2><button type="button" class="btn primary" data-save>Save</button></div>
+    <div class="ovl-body"><div class="fields">
+      <div class="fld half"><label for="ch_prov">Provider</label><select id="ch_prov">${Object.entries(PROVIDERS).map(([k, p]) => `<option value="${k}" ${k === c.provider ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="fld half"><label for="ch_label">Name (optional)</label><input id="ch_label" type="text" value="${esc(c.label)}" placeholder="e.g. Gemini (fast)"></div>
+      <div class="fld"><label for="ch_key">API key — <a id="ch_site" href="${PROVIDERS[c.provider].site}" target="_blank" rel="noopener">get a free key</a></label>
+        <input id="ch_key" type="password" autocomplete="off" spellcheck="false" value="${esc(c.key)}" placeholder="${esc(PROVIDERS[c.provider].keyHint)}"></div>
+      <div class="fld"><label for="ch_model">Model</label>
+        <div class="rowflex"><input id="ch_model" type="text" list="ch_models" value="${esc(c.model)}" placeholder="Tap “Find models”"><datalist id="ch_models"></datalist>
+        <button type="button" class="btn" data-find>Find models</button></div></div>
+      <div class="fld"><label class="toggle big nopad"><input id="ch_on" type="checkbox" ${c.enabled !== false ? 'checked' : ''}> Use this channel</label></div>
+      <div class="btnrow"><button type="button" class="btn" data-test>Test this channel</button></div>
+      <p class="small muted" id="ch_msg"></p>
+    </div></div>`);
+  const $ = s => el.querySelector(s);
+  el.addEventListener('input', () => { el._dirty = true; });
+  $('#ch_prov').onchange = () => {
+    const p = PROVIDERS[$('#ch_prov').value];
+    $('#ch_site').href = p.site; $('#ch_key').placeholder = p.keyHint; $('#ch_model').value = p.defaultModel; $('#ch_models').innerHTML = '';
+  };
+  if (isNew && !c.model) $('#ch_model').value = PROVIDERS[c.provider].defaultModel;
+  const msg = (t, err) => { $('#ch_msg').textContent = t; $('#ch_msg').className = 'small ' + (err ? 'errtext' : 'muted'); };
+  $('[data-find]').onclick = async () => {
+    msg('Looking up models…');
+    try {
+      const models = await listModels($('#ch_prov').value, $('#ch_key').value.trim());
+      $('#ch_models').innerHTML = models.map(m => `<option value="${esc(m)}">`).join('');
+      if (!$('#ch_model').value) $('#ch_model').value = pickDefault($('#ch_prov').value, models);
+      msg(`${models.length} models available${$('#ch_prov').value === 'openrouter' ? ' for free' : ''}. Click the Model box to choose one.`);
+    } catch (e) { msg(e.message || 'Could not list models.', true); }
+  };
+  const read = () => ({ ...c, provider: $('#ch_prov').value, key: $('#ch_key').value.trim(), model: $('#ch_model').value.trim(), label: $('#ch_label').value.trim(), enabled: $('#ch_on').checked });
+  $('[data-test]').onclick = async () => {
+    const t = read();
+    if (!t.key || !t.model) return msg('Add the key and a model first.', true);
+    msg('Testing…');
+    clearRest(t.id);
+    try {
+      const r = await askChain([t], [{ role: 'user', content: 'Reply with exactly: OK' }]);
+      msg(`Works — ${r.model} answered “${r.text.slice(0, 40)}”.`);
+    } catch (e) { msg((e.notes && e.notes[0]) || e.message, true); }
+  };
+  $('[data-save]').onclick = async () => {
+    const t = read();
+    if (!t.key) return msg('Paste the API key.', true);
+    if (!t.model) return msg('Choose a model (tap Find models).', true);
+    const i = aiCfg.channels.findIndex(x => x.id === t.id);
+    if (i >= 0) aiCfg.channels[i] = t; else aiCfg.channels.push(t);
+    clearRest(t.id);
+    el._close();
+    try { await saveAi(); toast('AI channel saved'); } catch (e) { toast('Could not save the channel.', true); }
+  };
+}
+
+function aiKinds() {
+  const all = SECTIONS.flatMap(s => s.kinds).filter(k => items.some(x => x.kind === k));
+  return { all, chosen: (ui.ai.kinds || AI_KINDS_DEFAULT).filter(k => all.includes(k)) };
+}
+function aiHTML() {
+  const A = ui.ai;
+  if (store.mode !== 'cloud') return `<div class="empty"><p>Sign in with Google to use Ask AI.</p></div>`;
+  if (!aiCfg) return `<p class="muted pad">Loading…</p>`;
+  const chans = aiCfg.channels.filter(c => c.enabled !== false && c.key && c.model);
+  if (!chans.length) return `<section class="card aiempty">${icon('spark')}<h3>Ask AI about your research</h3>
+    <p class="muted">Ask questions about your projects, articles, applications and lab records, or attach a data file (CSV) to analyse. First add at least one free AI channel — when one reaches its limit, the next takes over automatically.</p>
+    <div class="btnrow"><button type="button" class="btn primary" data-act="ai-add">${icon('plus')} Add an AI channel</button></div></section>`;
+  const { all, chosen } = aiKinds();
+  const focus = A.focus && byId[A.focus];
+  return `<section class="card aictx">
+    ${focus ? `<p class="aifocus">Looking at <b>${esc(focus.title)}</b> and what is linked to it <button type="button" class="btn sm" data-act="ai-unfocus">Use whole log</button></p>`
+      : `<div class="aikinds" role="group" aria-label="What the AI can see">${all.map(k => `<button type="button" class="chip ${chosen.includes(k) ? 'on' : ''}" data-act="ai-kind" data-k="${k}" aria-pressed="${chosen.includes(k)}">${esc(KINDS[k].plural)}</button>`).join('')}</div>`}
+    <label class="toggle"><input type="checkbox" data-act="ai-private" ${A.priv ? 'checked' : ''}> ${icon('lock')} Private — leave out notes, emails, private records and raw data rows</label>
+    ${A.file ? `<p class="aifile">${icon('file')} <b>${esc(A.file.name)}</b> <span class="muted small">${A.file.table ? `${A.file.desc.rows} rows × ${A.file.desc.cols.length} columns` : fmtSize(A.file.size)}</span>
+      <button type="button" class="iconbtn sm" data-act="ai-unfile" aria-label="Remove file">${icon('close')}</button></p>` : ''}
+  </section>
+  <div class="aichat" id="aichat" aria-live="polite">${A.msgs.length ? A.msgs.map(aiMsgHTML).join('') : `<div class="aihint muted">
+    <p>Try:</p><ul><li>Which deadlines and follow-ups are in the next 30 days?</li><li>Summarise where each of my articles stands and what is left to do.</li>
+    <li>Which professors have not replied, and what should I write next?</li><li>Attach a CSV and ask: “What stands out in this data?”</li></ul></div>`}
+    ${A.busy ? `<div class="aimsg bot busy"><span class="aidots"><i></i><i></i><i></i></span> <span class="small muted" id="aitry">${esc(A.trying || 'Thinking…')}</span>
+      <button type="button" class="btn sm" data-act="ai-stop">Stop</button></div>` : ''}
+  </div>
+  <form id="aiform" class="aiform">
+    <label class="iconbtn" title="Attach a data file (CSV, TSV, TXT, MD)" aria-label="Attach a data file">${icon('upload')}<input type="file" accept=".csv,.tsv,.txt,.md,.json,text/csv,text/plain" data-act="ai-file" hidden></label>
+    <textarea id="aiq" rows="1" placeholder="Ask about your research…" aria-label="Your question">${esc(A.draft)}</textarea>
+    <button type="submit" class="btn primary" ${A.busy ? 'disabled' : ''}>Send</button>
+  </form>
+  <p class="small muted aichans">${aiCfg.channels.map((c, i) => { const [cls] = chStatus(c); return `<span class="chdot ${cls}"></span>${esc(chName(c))}`; }).join(' → ')}
+    · <a href="#/settings" data-scroll="aiCard">channels</a>${A.msgs.length ? ` · <a href="#" data-act="ai-clear">new chat</a>` : ''}</p>`;
+}
+function aiMsgHTML(m) {
+  if (m.role === 'user') return `<div class="aimsg me">${esc(m.text).replace(/\n/g, '<br>')}</div>`;
+  if (m.role === 'data') {
+    const d = m.desc;
+    return `<div class="aimsg data"><p class="small"><b>${icon('file')} ${esc(m.name)}</b> — ${d.rows} rows. Computed by the app:</p>
+      <div class="mdtable"><table><tr><th>Column</th><th>n</th><th>missing</th><th>mean ± sd</th><th>median [Q1–Q3]</th><th>min–max</th></tr>
+      ${d.cols.map(c => c.type === 'number' ? `<tr><td>${esc(c.name)}</td><td>${c.n}</td><td>${c.missing}</td><td>${fmtNum(c.mean)} ± ${fmtNum(c.sd)}</td><td>${fmtNum(c.median)} [${fmtNum(c.q1)}–${fmtNum(c.q3)}]</td><td>${fmtNum(c.min)}–${fmtNum(c.max)}</td></tr>`
+        : `<tr><td>${esc(c.name)}</td><td>${c.n}</td><td>${c.missing}</td><td colspan="3" class="muted">${c.idLike ? 'all different (ID column)' : `${c.distinct} distinct · ${esc(c.top.slice(0, 3).map(([v, k]) => `${v} (${k})`).join(', '))}`}</td></tr>`).join('')}</table></div>
+      ${d.groups.length ? `<p class="small"><b>By group</b></p><div class="mdtable"><table><tr><th>Value</th><th>Group</th><th>n</th><th>mean ± sd</th><th>median</th></tr>
+        ${d.groups.map(g => g.stats.map((s, i) => `<tr><td>${i ? '' : esc(g.col) + ' <span class="muted">by ' + esc(g.by) + '</span>'}</td><td>${esc(s.group)}</td><td>${s.n}</td><td>${fmtNum(s.mean)} ± ${fmtNum(s.sd)}</td><td>${fmtNum(s.median)}</td></tr>`).join('')).join('')}</table></div>` : ''}
+      ${d.cors.length ? `<p class="small">Strongest correlations: ${d.cors.slice(0, 4).map(c => `${esc(c.a)} ~ ${esc(c.b)} r = ${c.r.toFixed(2)}`).join(' · ')}</p>` : ''}</div>`;
+  }
+  if (m.role === 'error') return `<div class="aimsg err"><b>${esc(m.text)}</b>${m.notes && m.notes.length ? `<ul class="small">${m.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    <a href="#/settings" data-scroll="aiCard" class="small">Check AI channels</a></div>`;
+  return `<div class="aimsg bot"><div class="md">${mdToHtml(m.text)}</div>
+    <p class="aimeta">${icon('spark')} ${esc(m.channel)} · ${esc(m.model)}${m.notes && m.notes.length ? ` · <span title="${esc(m.notes.join('\n'))}">switched ${m.notes.length}×</span>` : ''}
+      <button type="button" class="iconbtn sm" data-act="ai-copy" data-i="${m.i}" aria-label="Copy answer">${icon('copy')}</button></p>
+    ${m.notes && m.notes.length ? `<p class="small muted aiswitch">${m.notes.map(esc).join(' · ')}</p>` : ''}</div>`;
+}
+
+function aiContext() {
+  const A = ui.ai;
+  let pool = items;
+  if (A.focus && byId[A.focus]) {
+    const f = A.focus;
+    pool = items.filter(x => x.id === f || KINDS[x.kind].fields.some(fl => fl.type === 'ref' && x[fl.key] === f));
+  }
+  const kinds = A.focus ? [...new Set(pool.map(x => x.kind))] : aiKinds().chosen;
+  const src = A.priv ? pool : pool.map(x => ({ ...x, noShare: false }));
+  const recs = snapshot(src, { kinds, hideNotes: A.priv }).map(({ id, updatedAt, ...r }) => r);
+  let json = JSON.stringify(recs);
+  let cut = '';
+  if (json.length > 60000) { json = json.slice(0, 60000); cut = '\n(The record list was cut short because it is long; say so if the answer may depend on missing records.)'; }
+  let fileTxt = '';
+  if (A.file) {
+    if (A.file.table) {
+      fileTxt = describeText(A.file.name, A.file.desc);
+      if (!A.priv) fileTxt += `\nFirst ${Math.min(40, A.file.table.rows.length)} rows:\n` + [A.file.table.header, ...A.file.table.rows.slice(0, 40)].map(r => r.join('\t')).join('\n');
+    } else fileTxt = A.priv ? `A text file "${A.file.name}" is attached, but Private mode is on, so its content is not shared.` : `Text file "${A.file.name}":\n${A.file.text.slice(0, 20000)}`;
+  }
+  return `You are the AI assistant inside the private Research Log of ${user.name || 'a researcher'}, a biologist working on virology/vaccines at the bench and on immunopeptidomics and protein machine learning on the computer. Today is ${today()}.
+Answer from the records and data below when the question is about them, and say plainly when something is not in them. Never invent numbers, dates, citations, DOIs or names. Statistics for data files were computed exactly by the app — rely on them. Be concise; use short Markdown lists or tables when they help.
+${A.priv ? 'Private mode: personal notes, emails and raw data rows were left out on purpose.' : ''}
+RECORDS (${recs.length}, JSON):
+${json}${cut}
+${fileTxt ? '\nDATA:\n' + fileTxt : ''}`;
+}
+let aiAbort = null;
+async function aiSend(q) {
+  const A = ui.ai;
+  if (!q.trim() || A.busy) return;
+  A.msgs.push({ role: 'user', text: q.trim() });
+  A.draft = ''; A.busy = true; A.trying = 'Thinking…';
+  render(); aiScroll();
+  const history = A.msgs.filter(m => m.role === 'user' || m.role === 'bot').slice(-11, -1).map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
+  aiAbort = new AbortController();
+  try {
+    const r = await askChain(aiCfg.channels, [{ role: 'system', content: aiContext() }, ...history, { role: 'user', content: q.trim() }], {
+      signal: aiAbort.signal,
+      onTry: (ch, notes) => { A.trying = `${notes.length ? 'Switching to' : 'Asking'} ${chName(ch)}…`; const el = app.querySelector('#aitry'); if (el) el.textContent = A.trying; },
+    });
+    A.msgs.push({ role: 'bot', text: r.text, model: r.model, channel: chName(r.channel), notes: r.notes, i: A.msgs.length });
+  } catch (e) {
+    if (e.name === 'AbortError') A.msgs.push({ role: 'error', text: 'Stopped.' });
+    else A.msgs.push({ role: 'error', text: e.message, notes: e.notes });
+  } finally {
+    A.busy = false; aiAbort = null;
+    if (route().view === 'ai') { render(); aiScroll(); }
+    else toast('Ask AI: answer ready');
+  }
+}
+function aiScroll() { const el = app.querySelector('#aichat'); if (el) el.lastElementChild?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+async function aiAttach(f) {
+  if (f.size > 5 * 1048576) return toast('That file is over 5 MB. Save a smaller CSV (or a part of it).', true);
+  const text = await f.text();
+  const table = /\.(csv|tsv|txt)$/i.test(f.name) || /csv|tab-separated/.test(f.type) ? parseDelimited(text) : null;
+  const good = table && table.header.length > 1;
+  ui.ai.file = good ? { name: f.name, table, desc: describe(table), size: f.size } : { name: f.name, text, size: f.size };
+  if (good) ui.ai.msgs.push({ role: 'data', name: f.name, desc: ui.ai.file.desc });
+  render(); aiScroll();
+  toast(good ? 'Data summarised — now ask a question about it' : 'File attached');
+}
+
 /* ---------------- search ---------------- */
 function searchHTML() {
   return `<div class="toolbar"><input id="q" class="filter" type="search" placeholder="Search everything — experiments, protocols, papers…" value="${esc(ui.q || '')}" aria-label="Search"></div>
@@ -1367,6 +1591,7 @@ function settingsHTML() {
     </div>
     <p class="small muted">On Android, open this page in Chrome and choose <b>⋮ → Add to Home screen</b>, or install your private Android app.</p>
   </section>
+  <section class="card" id="aiCard">${aiCardInner()}</section>
   ${sharingHTML()}
   <section class="card" id="claudeAuto">
     <h3>Let Claude add data for you</h3>
@@ -1580,6 +1805,21 @@ app.addEventListener('click', async e => {
     case 'appgroup': ui.appGroup = t.dataset.g; render(); break;
     case 'ghadd': addRepoAsProject(t.dataset.repo); break;
     case 'ghpick': ghPick(t.dataset.mode); break;
+    case 'ai-add': channelForm(null); break;
+    case 'ai-edit': channelForm(t.dataset.id); break;
+    case 'ai-del': { const c = aiCfg.channels.find(x => x.id === t.dataset.id); if (c && confirm(`Remove the AI channel “${chName(c)}”? Its key is deleted from your settings.`)) { aiCfg.channels = aiCfg.channels.filter(x => x !== c); await saveAi(); } break; }
+    case 'ai-up': case 'ai-down': {
+      const L = aiCfg.channels, i = L.findIndex(x => x.id === t.dataset.id), j = act === 'ai-up' ? i - 1 : i + 1;
+      if (i >= 0 && j >= 0 && j < L.length) { [L[i], L[j]] = [L[j], L[i]]; await saveAi(); }
+      break;
+    }
+    case 'ai-kind': { const { chosen } = aiKinds(); ui.ai.kinds = chosen.includes(t.dataset.k) ? chosen.filter(k => k !== t.dataset.k) : [...chosen, t.dataset.k]; render(); break; }
+    case 'ai-private': ui.ai.priv = t.checked; if (!t.checked) toast('Private is off: notes and raw data rows will be sent to the AI provider', true); render(); break;
+    case 'ai-unfocus': ui.ai.focus = null; render(); break;
+    case 'ai-unfile': ui.ai.file = null; render(); break;
+    case 'ai-stop': if (aiAbort) aiAbort.abort(); break;
+    case 'ai-clear': e.preventDefault(); ui.ai.msgs = []; ui.ai.file = null; render(); break;
+    case 'ai-copy': { const m = ui.ai.msgs[Number(t.dataset.i)]; if (m) copyText(m.text, 'Answer copied'); break; }
     case 'link-new': linkEditor(null); break;
     case 'link-edit': linkEditor(sharing.links.find(l => l.id === t.dataset.id)); break;
     case 'link-copy': copyLink(sharing.links.find(l => l.id === t.dataset.id)); break;
@@ -1711,6 +1951,7 @@ app.addEventListener('click', async e => {
 app.addEventListener('click', e => {
   const a = e.target.closest('a[data-scroll]'); if (a) ui.scrollTo = a.dataset.scroll;
   const g = e.target.closest('a[data-group]'); if (g) ui.appGroup = g.dataset.group;
+  const f = e.target.closest('a[data-aifocus]'); if (f) ui.ai.focus = f.dataset.aifocus;
 }, true);
 
 app.addEventListener('change', async e => {
@@ -1726,6 +1967,9 @@ app.addEventListener('change', async e => {
   } else if (t.dataset.act === 'import') {
     const f = t.files[0]; t.value = '';
     if (f) importData(f);
+  } else if (t.dataset.act === 'ai-file') {
+    const f = t.files[0]; t.value = '';
+    if (f) aiAttach(f);
   } else if (t.dataset.act === 'rf-import') {
     const f = t.files[0]; t.value = '';
     const a = byId[route().ws];
@@ -1745,6 +1989,11 @@ app.addEventListener('change', async e => {
 
 app.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'aiq') {
+    ui.ai.draft = t.value;
+    t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px';
+    return;
+  }
   if (t.id === 'rfq') {
     const q = t.value.trim().toLowerCase();
     app.querySelectorAll('#refscard .refs li').forEach(li => { li.hidden = !!q && !li.textContent.toLowerCase().includes(q); });
@@ -1763,7 +2012,13 @@ app.addEventListener('input', e => {
   } else if (editor && t.closest('#edform')) editor.dirty = true;
 });
 
-app.addEventListener('submit', e => { if (e.target.id === 'edform') { e.preventDefault(); saveEditor(); } });
+app.addEventListener('submit', e => {
+  if (e.target.id === 'edform') { e.preventDefault(); saveEditor(); }
+  if (e.target.id === 'aiform') { e.preventDefault(); aiSend(app.querySelector('#aiq').value); }
+});
+app.addEventListener('keydown', e => {
+  if (e.target.id === 'aiq' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !('ontouchstart' in window)) { e.preventDefault(); aiSend(e.target.value); }
+});
 addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
   const ov = document.querySelector('.ovl');
