@@ -13,8 +13,33 @@ import {
 } from 'firebase/firestore';
 
 // Remove everything this app stored in the browser (demo data, photos).
-export function wipeLocal() {
-  try { Object.keys(localStorage).filter(k => k.startsWith('rl.')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+// keepSetup = true keeps this device's sync setup (used after moving demo data into the account).
+export function wipeLocal(keepSetup) {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('rl.') && !(keepSetup && k === 'rl.setup'))
+      .forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+}
+
+// The Firebase setup is pasted by the owner on each device and kept only in that device's browser.
+// It is never part of the published website.
+const SETUP_KEYS = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+export function parseSetup(text) {
+  const out = {};
+  const re = /["']?(apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId)["']?\s*:\s*["']([^"']+)["']/g;
+  let m; while ((m = re.exec(String(text || '')))) out[m[1]] = m[2].trim();
+  const ok = /^AIza[0-9A-Za-z_-]{30,}$/.test(out.apiKey || '')
+    && /^[a-z0-9-]{4,}$/.test(out.projectId || '')
+    && /^1:\d+:web:[0-9a-f]+$/.test(out.appId || '')
+    && /\.(firebaseapp\.com|web\.app)$/.test(out.authDomain || '');
+  return ok ? Object.fromEntries(SETUP_KEYS.filter(k => out[k]).map(k => [k, out[k]])) : null;
+}
+export function loadSetup() {
+  try { return parseSetup(localStorage.getItem('rl.setup') || ''); } catch (e) { return null; }
+}
+export function saveSetup(cfg) {
+  try { localStorage.setItem('rl.setup', JSON.stringify(cfg)); return true; } catch (e) { return false; }
 }
 
 export const newId = () =>

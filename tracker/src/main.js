@@ -1,9 +1,11 @@
 import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf } from './schema.js';
-import { CloudStore, LocalStore, newId, wipeLocal } from './store.js';
+import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
 
 const APK_URL = 'https://github.com/Hafij-BGE/Hafij-BGE.github.io/releases/latest/download/research-log.apk';
-const cfg = window.FIREBASE_CONFIG || {};
-const hasCfg = !!(cfg.apiKey && !String(cfg.apiKey).startsWith('PASTE'));
+// Site config (public identifiers, not secrets — data is protected by Firestore rules),
+// or a setup pasted on this device as a fallback.
+const cfg = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {})) || loadSetup();
+const hasCfg = !!cfg;
 
 let store;
 let items = [], byId = {}, user = null, status = '', authKnown = false;
@@ -162,7 +164,7 @@ function homeHTML() {
   const local = store.mode === 'local';
 
   return `
-  ${local ? `<div class="banner warn"><b>Not syncing yet.</b> Data stays in this browser until Google sync is connected. <a href="#/settings">Details</a></div>` : ''}
+  ${local ? `<div class="banner warn"><b>Not syncing yet.</b> Data stays in this browser until you connect Google sync. <a href="#/settings">Connect</a></div>` : ''}
   <section class="hello">
     <h2>${greet}${name ? ', ' + esc(name) : ''}</h2>
     <p>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
@@ -292,7 +294,11 @@ function settingsHTML() {
       ${user.photo ? `<img src="${esc(user.photo)}" alt="" referrerpolicy="no-referrer">` : `<div class="logo-tiles"><i></i><i></i><i></i><i></i></div>`}
       <div><b>${esc(user.name || 'Local mode')}</b><span>${esc(user.email || '')}</span></div>
     </div>
-    ${local ? `<p class="banner warn">Google sync isn't connected yet, so records are saved only in this browser. Once your Firebase project is connected, you'll sign in with Google here and everything syncs between phone and web.</p>`
+    ${local ? `<p class="banner warn">Google sync isn't connected on this device yet, so records are saved only in this browser.</p>
+      <h3 style="margin-top:16px">Connect Google sync</h3>
+      <p class="muted small">Paste your Firebase setup (the <code>firebaseConfig = { … }</code> block). It is saved only in this browser — it is not part of the website and is not sent anywhere except to your own Firebase project.</p>
+      <textarea id="setupText" class="setup" rows="6" spellcheck="false" autocomplete="off" placeholder="apiKey: &quot;…&quot;, authDomain: &quot;…&quot;, projectId: &quot;…&quot;, appId: &quot;…&quot;"></textarea>
+      <div class="btnrow"><button class="btn primary" data-act="connect">Connect and sign in</button></div>`
       : `<p class="muted">Records sync live between all devices signed in with this Google account and are stored in your own Firebase project. Only your account can read them. The app also keeps an offline copy on this device so you can work without a connection.</p>
          <button class="btn" data-act="signout">Sign out and erase this device's copy</button>`}
   </section>
@@ -472,7 +478,7 @@ app.addEventListener('click', async e => {
       try { await store.signIn(); } catch (err) { toast(err.message, true); }
       break;
     case 'signout':
-      if (confirm('Sign out? The offline copy on this device will be erased. Your synced data stays safe in your account.')) store.signOut();
+      if (confirm('Sign out? This device\'s offline copy and its sync setup will be erased. Your synced data stays safe in your account; to use this device again, paste the setup once more.')) store.signOut();
       break;
     case 'add': go(`#/${r.section.id}/${r.kind}/new`); break;
     case 'toggle': {
@@ -514,6 +520,14 @@ app.addEventListener('click', async e => {
       if (deferredInstall) { deferredInstall.prompt(); deferredInstall = null; }
       break;
     case 'export': exportData(); break;
+    case 'connect': {
+      const parsed = parseSetup(app.querySelector('#setupText').value);
+      if (!parsed) return toast("That doesn't look like a complete Firebase config. Paste the whole { … } block.", true);
+      if (!saveSetup(parsed)) return toast('This browser blocked saving the setup (private window?).', true);
+      app.querySelector('#setupText').value = '';
+      location.replace(location.pathname);
+      break;
+    }
     case 'seed': seedCV(); break;
   }
 });
@@ -563,7 +577,7 @@ async function offerMigration() {
   let local = {};
   try { local = JSON.parse(localStorage.getItem('rl.items') || '{}'); } catch (e) {}
   const list = Object.entries(local).map(([id, v]) => ({ id, ...v })).filter(x => KINDS[x.kind]);
-  if (!list.length) return wipeLocal();
+  if (!list.length) return wipeLocal(true);
   if (!confirm(`Move ${list.length} records saved on this device before sign-in into your synced account?`)) return;
   for (const it of list) {
     const pics = [];
@@ -574,7 +588,7 @@ async function offerMigration() {
     if (it.photos) it.photos = pics;
   }
   await store.bulkSave(list);
-  wipeLocal();
+  wipeLocal(true);
   toast(`Moved ${list.length} records into your account`);
 }
 

@@ -234,3 +234,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.err { background: var(--red); color: #fff; }
 @media (min-width: 900px) { .toast { bottom: 36px; } }
+.setup { width: 100%; min-height: 120px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--card); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+.setup:focus { outline: none; border-color: var(--dry); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dry) 20%, transparent); }
+code { font: .9em ui-monospace, Menlo, Consolas, monospace; }
