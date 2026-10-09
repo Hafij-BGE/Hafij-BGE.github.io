@@ -5,6 +5,7 @@ import {
   inFolder, underFolder, mdToHtml, buildZip, mapFolderUpload,
 } from './files.js';
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
+import { LINK_TYPES, linkTypeLabel, guessLink, linkHref, formatRef, sameRef, lookupDoi, cleanDoi, parseBib, parseRis, parsePasted, toBib, toRis, dataStatement } from './refs.js';
 import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
@@ -598,6 +599,197 @@ async function ghPick(mode) {
   });
 }
 
+/* ---------------- article links & references ---------------- */
+const rid = () => newId();
+async function copyText(text, msg) {
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); toast(msg || 'Copied'); }
+  catch (e) { prompt('Copy:', text); }
+}
+function saveArticle(a, patch, msg) {
+  const cur = byId[a.id] || a;
+  store.save({ ...cur, ...patch });
+  if (msg) toast(msg);
+}
+const saveRefs = (a, refs, msg) => {
+  if (JSON.stringify(refs).length > 700000) return toast('That is too many references for one article (limit about 1500).', true);
+  saveArticle(a, { refs }, msg);
+};
+
+function linksCardHTML(a) {
+  const links = a.links || [];
+  return `<section class="card" id="linkscard">
+    <div class="cardhead"><h3>${icon('link')} Links <span class="muted small">${links.length || ''}</span></h3>
+      <button type="button" class="btn sm" data-act="lk-add">${icon('plus')} Add link</button></div>
+    ${links.length ? `<ul class="rows linklist">${links.map(l => {
+      const href = linkHref(l.url);
+      return `<li class="row"><span class="ltype t-${esc(l.type)}">${esc(linkTypeLabel(l.type))}</span>
+        <span class="rowmain">${href ? `<a class="t" href="${esc(href)}" target="_blank" rel="noopener">${esc(l.label || l.url)}</a>` : `<span class="t">${esc(l.label || l.url)}</span>`}
+          <span class="s">${esc([l.label ? l.url : '', l.note].filter(Boolean).join(' · '))}</span></span>
+        <span class="tail">
+          <button type="button" class="iconbtn sm" data-act="lk-copy" data-id="${l.id}" aria-label="Copy link">${icon('copy')}</button>
+          <button type="button" class="iconbtn sm" data-act="lk-edit" data-id="${l.id}" aria-label="Edit link">${icon('edit')}</button>
+          <button type="button" class="iconbtn sm" data-act="lk-del" data-id="${l.id}" aria-label="Remove link">${icon('trash')}</button>
+        </span></li>`;
+    }).join('')}</ul>` : `<p class="muted">Keep every place this article's material lives: GitHub repositories, datasets (Zenodo, figshare, OSF), accession numbers (GEO, PRIDE, PDB, SRA), preprint, protocols, supplementary files.</p>`}
+    ${links.length || a.repo ? `<div class="btnrow"><button type="button" class="btn sm" data-act="lk-das">${icon('copy')} Copy data availability statement</button></div>` : ''}
+  </section>`;
+}
+function linkForm(a, id) {
+  const l = (a.links || []).find(x => x.id === id) || { type: '', url: '', label: '', note: '' };
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>${id ? 'Edit link' : 'Add link'}</h2><button type="button" class="btn primary" data-save>Save</button></div>
+    <div class="ovl-body"><div class="fields">
+      <div class="fld"><label for="lk_url">Web address, DOI or accession number</label><input id="lk_url" type="text" inputmode="url" value="${esc(l.url)}" placeholder="https://github.com/…  ·  10.5281/zenodo.…  ·  GSE12345  ·  PXD024871"></div>
+      <div class="fld half"><label for="lk_type">Type</label><select id="lk_type">${LINK_TYPES.map(([k, v]) => `<option value="${k}" ${k === (l.type || 'other') ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
+      <div class="fld half"><label for="lk_label">Name</label><input id="lk_label" type="text" value="${esc(l.label)}" placeholder="e.g. Raw MS data (PRIDE)"></div>
+      <div class="fld"><label for="lk_note">Note</label><input id="lk_note" type="text" value="${esc(l.note || '')}" placeholder="e.g. embargoed until publication"></div>
+    </div></div>`);
+  const url = el.querySelector('#lk_url'), type = el.querySelector('#lk_type');
+  let typed = !!id;
+  type.onchange = () => { typed = true; };
+  url.oninput = () => { el._dirty = true; if (!typed) type.value = guessLink(url.value); };
+  setTimeout(() => url.focus(), 50);
+  el.querySelector('[data-save]').onclick = () => {
+    const v = url.value.trim();
+    if (!v) return toast('Add the web address or accession number.', true);
+    const rec = { id: l.id || rid(), url: v, type: type.value, label: el.querySelector('#lk_label').value.trim(), note: el.querySelector('#lk_note').value.trim() || undefined };
+    const links = (byId[a.id].links || []).filter(x => x.id !== rec.id);
+    if (!id && links.some(x => x.url.toLowerCase() === v.toLowerCase())) return toast('That link is already saved.', true);
+    if (id) { const i = (byId[a.id].links || []).findIndex(x => x.id === id); links.splice(i < 0 ? links.length : i, 0, rec); } else links.push(rec);
+    el._close();
+    saveArticle(a, { links }, id ? 'Link updated' : 'Link added');
+  };
+}
+function delLink(a, id) {
+  const l = (a.links || []).find(x => x.id === id);
+  if (l && confirm(`Remove the link “${l.label || l.url}”?`)) saveArticle(a, { links: a.links.filter(x => x.id !== id) }, 'Link removed');
+}
+
+function refsCardHTML(a) {
+  const refs = a.refs || [];
+  const missing = refs.filter(r => r.doi && !r.title).length;
+  return `<section class="card" id="refscard">
+    <div class="cardhead"><h3>${icon('research')} References <span class="muted small">${refs.length || ''}</span></h3></div>
+    <div class="btnrow">
+      <button type="button" class="btn sm primary" data-act="rf-doi">${icon('plus')} Add by DOI</button>
+      <button type="button" class="btn sm" data-act="rf-paste">${icon('copy')} Paste a list</button>
+      <label class="btn sm">${icon('upload')} Import .bib / .ris<input type="file" accept=".bib,.ris,.txt,.bibtex,text/plain" data-act="rf-import" hidden></label>
+    </div>
+    ${refs.length ? `
+      ${refs.length > 8 ? `<input id="rfq" class="filter rfq" type="search" placeholder="Search ${refs.length} references…" aria-label="Search references">` : ''}
+      <ol class="refs">${refs.map(r => {
+        const doi = r.doi ? ` <a href="https://doi.org/${esc(r.doi)}" target="_blank" rel="noopener">doi</a>` : '';
+        return `<li><span class="rtext">${esc(formatRef(r).replace(/\s*https:\/\/doi\.org\/\S+$/, ''))}${doi}</span>
+          <span class="ract"><button type="button" class="iconbtn sm" data-act="rf-edit" data-id="${r.id}" aria-label="Edit reference">${icon('edit')}</button>
+          <button type="button" class="iconbtn sm" data-act="rf-del" data-id="${r.id}" aria-label="Remove reference">${icon('trash')}</button></span></li>`;
+      }).join('')}</ol>
+      <div class="btnrow">
+        <button type="button" class="btn sm" data-act="rf-copy">${icon('copy')} Copy all</button>
+        <button type="button" class="btn sm" data-act="rf-bib">${icon('download')} .bib</button>
+        <button type="button" class="btn sm" data-act="rf-ris">${icon('download')} .ris</button>
+        <button type="button" class="btn sm" data-act="rf-sort">Sort A–Z</button>
+        ${missing ? `<button type="button" class="btn sm" data-act="rf-fill">Fill details for ${missing} from DOI</button>` : ''}
+      </div>
+      <p class="small muted">.bib works with LaTeX/Overleaf and Zotero; .ris with EndNote, Mendeley and Zotero.</p>`
+    : `<p class="muted">Add the full reference list: type or paste DOIs and the details are filled in for you, paste a numbered list, or import a .bib / .ris file exported from Zotero, Mendeley or EndNote.</p>`}
+  </section>`;
+}
+function addRefs(a, list, how) {
+  const cur = [...(byId[a.id].refs || [])];
+  let added = 0, dup = 0;
+  for (const r of list) {
+    if (cur.some(x => sameRef(x, r))) { dup++; continue; }
+    cur.push({ id: rid(), ...Object.fromEntries(Object.entries(r).filter(([, v]) => v !== '' && v != null)) });
+    added++;
+  }
+  saveRefs(a, cur);
+  toast(`${added} reference${added === 1 ? '' : 's'} added${how ? ' ' + how : ''}${dup ? ` · ${dup} already in the list` : ''}`);
+  return added;
+}
+function refsByDoi(a) {
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>Add references by DOI</h2><button type="button" class="btn primary" data-save>Add</button></div>
+    <div class="ovl-body"><div class="fld"><label for="rf_dois">One or more DOIs or doi.org links — one per line, or mixed into text</label>
+      <textarea id="rf_dois" class="setup" rows="7" placeholder="10.1016/j.jsps.2023.06.014&#10;https://doi.org/10.34172/jhp.2023.31"></textarea></div>
+      <p class="small muted">Authors, title, journal, year, volume and pages are looked up from Crossref.</p></div>`);
+  setTimeout(() => el.querySelector('textarea').focus(), 50);
+  el.querySelector('[data-save]').onclick = async () => {
+    const dois = [...new Set((el.querySelector('textarea').value.match(/10\.\d{4,9}\/[^\s"<>,;]+/g) || []).map(d => cleanDoi(d)).filter(Boolean))];
+    if (!dois.length) return toast('No DOI found in that text.', true);
+    el._close();
+    const found = [], bad = [];
+    for (const [i, d] of dois.entries()) {
+      upbar(`Looking up ${i + 1} of ${dois.length}: ${d}`, i / dois.length);
+      try { found.push(await lookupDoi(d)); } catch (e) { bad.push(d); }
+    }
+    upbar(null);
+    if (found.length) addRefs(a, found);
+    if (bad.length) setTimeout(() => toast(`Not found${navigator.onLine ? '' : ' (offline)'}: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? '…' : ''}`, true), 2300);
+  };
+}
+function refsPaste(a) {
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>Paste references</h2><button type="button" class="btn primary" data-save>Add</button></div>
+    <div class="ovl-body"><div class="fld"><label for="rf_text">Paste your reference list — one per line (numbers are removed), or BibTeX / RIS text</label>
+      <textarea id="rf_text" class="setup" rows="12"></textarea></div>
+      <p class="small muted">References are kept exactly as you pasted them. If they contain DOIs, use “Fill details from DOI” afterwards for clean .bib/.ris export.</p></div>`);
+  setTimeout(() => el.querySelector('textarea').focus(), 50);
+  el.querySelector('[data-save]').onclick = () => {
+    const list = parsePasted(el.querySelector('textarea').value);
+    if (!list.length) return toast('No references found in that text.', true);
+    el._close();
+    addRefs(a, list);
+  };
+}
+async function importRefFile(a, f) {
+  const text = await f.text();
+  const list = /\.ris$/i.test(f.name) || /^TY  -/m.test(text) ? parseRis(text) : /@\w+\s*\{/.test(text) ? parseBib(text) : parsePasted(text);
+  if (!list.length) return toast(`No references found in ${f.name}.`, true);
+  addRefs(a, list, `from ${f.name}`);
+}
+async function fillRefs(a) {
+  const refs = [...(byId[a.id].refs || [])];
+  const todo = refs.filter(r => r.doi && !r.title);
+  let ok = 0;
+  for (const [i, r] of todo.entries()) {
+    upbar(`Looking up ${i + 1} of ${todo.length}`, i / todo.length);
+    try { Object.assign(refs[refs.indexOf(r)], await lookupDoi(r.doi)); ok++; } catch (e) {}
+  }
+  upbar(null);
+  saveRefs(a, refs, `Filled details for ${ok} of ${todo.length}`);
+}
+function refForm(a, id) {
+  const r = (a.refs || []).find(x => x.id === id);
+  if (!r) return;
+  const F = [['authors', 'Authors (Family Initials; separated by ;)'], ['title', 'Title'], ['journal', 'Journal'], ['year', 'Year', 'half'], ['volume', 'Volume', 'half'],
+    ['issue', 'Issue', 'half'], ['pages', 'Pages / article no.', 'half'], ['doi', 'DOI'], ['url', 'Web address'], ['text', 'Full reference as text (used when there is no title)']];
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>Reference</h2><button type="button" class="btn primary" data-save>Save</button></div>
+    <div class="ovl-body"><div class="fields">${F.map(([k, lab, cls]) => k === 'text' || k === 'title'
+      ? `<div class="fld"><label for="rf_${k}">${lab}</label><textarea id="rf_${k}" rows="${k === 'text' ? 3 : 2}">${esc(r[k] || '')}</textarea></div>`
+      : `<div class="fld ${cls || ''}"><label for="rf_${k}">${lab}</label><input id="rf_${k}" type="text" value="${esc(r[k] || '')}"></div>`).join('')}
+    </div>
+    <div class="sheet-foot">${r.doi ? `<button type="button" class="btn" data-look>Refresh from DOI</button>` : ''}</div></div>`);
+  el.addEventListener('input', () => { el._dirty = true; });
+  const look = el.querySelector('[data-look]');
+  if (look) look.onclick = async () => {
+    try { const d = await lookupDoi(cleanDoi(el.querySelector('#rf_doi').value) || r.doi); F.forEach(([k]) => { if (d[k] !== undefined) el.querySelector('#rf_' + k).value = d[k]; }); el._dirty = true; }
+    catch (e) { toast(e.message, true); }
+  };
+  el.querySelector('[data-save]').onclick = () => {
+    const nr = { id: r.id };
+    F.forEach(([k]) => { const v = el.querySelector('#rf_' + k).value.trim(); if (v) nr[k] = k === 'doi' ? cleanDoi(v) || v : v; });
+    if (!nr.title && !nr.text && !nr.doi) return toast('Add at least a title, the full text or a DOI.', true);
+    el._close();
+    saveRefs(a, (byId[a.id].refs || []).map(x => (x.id === r.id ? nr : x)), 'Reference saved');
+  };
+}
+function delRef(a, id) {
+  const r = (a.refs || []).find(x => x.id === id);
+  if (r && confirm(`Remove this reference?\n\n${formatRef(r).slice(0, 200)}`)) saveRefs(a, a.refs.filter(x => x.id !== id), 'Reference removed');
+}
+
 function wsRootHTML(r, a, own, all) {
   const total = own.reduce((n, f) => n + (f.size || 0), 0);
   const top = childFolders(all, '');
@@ -607,6 +799,7 @@ function wsRootHTML(r, a, own, all) {
   ${tilesHTML(a, own, top, `
     <button type="button" class="tile readme" data-act="readme"><span class="tileic">${icon('note')}</span><span class="tilet">${esc(a.readmeName || 'README.md')}</span><span class="tiles-s">${a.notes ? 'Notes & checklist' : 'Empty — tap to write'}</span></button>
     <button type="button" class="tile add" data-act="newfolder" data-parent=""><span class="tileic">${icon('folderplus')}</span><span class="tilet">New folder</span><span class="tiles-s">&nbsp;</span></button>`)}
+  ${a.kind === 'article' ? linksCardHTML(a) + refsCardHTML(a) : ''}
   ${inFolder(own, '').length ? `<h3 class="grouph">Files in this folder</h3>${fileRowsHTML(inFolder(own, ''))}` : ''}
   ${uploadBtns('', { whole: true }, a)}
   <section class="card readmecard">
@@ -1264,6 +1457,7 @@ function fieldHTML(f, item) {
     case 'checklist': return `<div class="fld">${lab}<div class="checks">${f.options.map((o, i) => `<label class="checkopt"><input type="checkbox" name="${f.key}" value="${esc(o)}" ${(v || []).includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('')}</div></div>`;
     case 'tags': return `<div class="fld">${lab}<input id="${id}" name="${f.key}" type="text" value="${esc((v || []).join(', '))}" placeholder="comma, separated, tags"></div>`;
     case 'url': return `<div class="fld">${lab}<input id="${id}" name="${f.key}" type="text" inputmode="url" value="${esc(v || '')}" placeholder="${esc(f.placeholder || 'https://…')}"></div>`;
+    case 'links': case 'refs': return '';   // edited inside the article's folder page
     case 'photos': return `<div class="fld">${lab}<div class="photos" id="photos"></div>
       <label class="btn">${icon('camera')} Add photo<input type="file" accept="image/*" multiple data-act="addphoto" hidden></label></div>`;
     default: return `<div class="fld">${lab}<input id="${id}" name="${f.key}" type="text" value="${esc(v || '')}" placeholder="${esc(f.placeholder || '')}" ${f.required ? 'required' : ''}></div>`;
@@ -1313,7 +1507,7 @@ function readForm() {
   const out = { ...editor.item };
   out.noShare = form.elements.noShare && form.elements.noShare.checked ? true : undefined;
   K.fields.forEach(f => {
-    if (f.type === 'photos') return;
+    if (['photos', 'links', 'refs'].includes(f.type)) return;
     const el = form.elements[f.key];
     if (!el) return;
     if (f.type === 'checklist') { out[f.key] = [...app.querySelectorAll(`#edform input[name="${f.key}"]:checked`)].map(c => c.value); return; }
@@ -1497,6 +1691,20 @@ app.addEventListener('click', async e => {
     case 'openfile': if (fid) openFile(fid); break;
     case 'dlfile': if (fid) downloadFile(fid); break;
     case 'fileinfo': if (fid) fileInfo(fid); break;
+    case 'lk-add': linkForm(a); break;
+    case 'lk-edit': linkForm(a, t.dataset.id); break;
+    case 'lk-del': delLink(a, t.dataset.id); break;
+    case 'lk-copy': copyText(linkHref((a.links || []).find(l => l.id === t.dataset.id)?.url) || (a.links || []).find(l => l.id === t.dataset.id)?.url, 'Link copied'); break;
+    case 'lk-das': copyText(dataStatement([...(a.repo ? [{ type: 'github', label: 'GitHub', url: a.repo }] : []), ...(a.links || [])].filter((l, i, all) => all.findIndex(x => x.url === l.url) === i)), 'Data availability statement copied'); break;
+    case 'rf-doi': refsByDoi(a); break;
+    case 'rf-paste': refsPaste(a); break;
+    case 'rf-edit': refForm(a, t.dataset.id); break;
+    case 'rf-del': delRef(a, t.dataset.id); break;
+    case 'rf-copy': copyText((a.refs || []).map((r, i) => `${i + 1}. ${formatRef(r)}`).join('\n'), `${(a.refs || []).length} references copied`); break;
+    case 'rf-bib': saveBlob(new Blob([toBib(a.refs || [])], { type: 'application/x-bibtex' }), `${zipRoot(a)}_references.bib`); break;
+    case 'rf-ris': saveBlob(new Blob([toRis(a.refs || [])], { type: 'application/x-research-info-systems' }), `${zipRoot(a)}_references.ris`); break;
+    case 'rf-fill': fillRefs(a); break;
+    case 'rf-sort': saveRefs(a, [...(a.refs || [])].sort((x, y) => formatRef(x).localeCompare(formatRef(y))), 'Sorted A–Z'); break;
   }
 });
 
@@ -1518,6 +1726,10 @@ app.addEventListener('change', async e => {
   } else if (t.dataset.act === 'import') {
     const f = t.files[0]; t.value = '';
     if (f) importData(f);
+  } else if (t.dataset.act === 'rf-import') {
+    const f = t.files[0]; t.value = '';
+    const a = byId[route().ws];
+    if (f && a) importRefFile(a, f);
   } else if (['upfiles', 'upappfolder', 'upsubfolder', 'importfolder'].includes(t.dataset.act)) {
     const list = [...t.files], act = t.dataset.act, folder = t.dataset.folder || '';
     t.value = '';
@@ -1533,6 +1745,11 @@ app.addEventListener('change', async e => {
 
 app.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'rfq') {
+    const q = t.value.trim().toLowerCase();
+    app.querySelectorAll('#refscard .refs li').forEach(li => { li.hidden = !!q && !li.textContent.toLowerCase().includes(q); });
+    return;
+  }
   if (t.id === 'filter') {
     ui.filters[route().kind] = t.value;
     const pos = t.selectionStart;

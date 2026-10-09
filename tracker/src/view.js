@@ -3,6 +3,7 @@
 import { KINDS, SECTIONS, APP_GROUPS, appGroup } from './schema.js';
 import CFG from './firebase-config.js';
 import { unseal } from './share.js';
+import { formatRef, linkHref, linkTypeLabel } from './refs.js';
 
 const root = document.getElementById('v');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,6 +41,8 @@ function fmt(f, v) {
       const u = /^10\.\d/.test(v) ? 'https://doi.org/' + v : v;
       return /^https?:\/\//.test(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>` : esc(v);
     }
+    case 'links': return `<ul class="vlist">${(v || []).map(l => { const h = linkHref(l.url); return `<li><span class="badge n">${esc(linkTypeLabel(l.type))}</span> ${h ? `<a href="${esc(h)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>` : esc(l.label || l.url)}</li>`; }).join('')}</ul>`;
+    case 'refs': return `<ol class="vlist refs">${(v || []).map(r => `<li>${esc(formatRef(r))}</li>`).join('')}</ol>`;
     case 'check': return v ? 'Yes' : 'No';
     case 'range': return `${Number(v) || 0}%`;
     case 'tags': case 'checklist': return (v || []).map(t => `<span class="badge n">${esc(t)}</span>`).join(' ');

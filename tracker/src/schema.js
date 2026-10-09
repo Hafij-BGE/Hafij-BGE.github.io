@@ -157,6 +157,8 @@ export const KINDS = {
       { key: 'project', label: 'Project', type: 'ref', ref: 'project' },
       { key: 'repo', label: 'GitHub repository', type: 'url', placeholder: 'https://github.com/Hafij-BGE/…' },
       { key: 'doi', label: 'DOI / preprint link', type: 'url' },
+      { key: 'links', label: 'Links (code, data, accessions)', type: 'links' },
+      { key: 'refs', label: 'References', type: 'refs' },
       { key: 'notes', label: 'README (aim, key results, figure list, to-dos — shown at the top of the folder)', type: 'textarea', rows: 6 },
       { key: 'tags', label: 'Tags', type: 'tags' },
     ],
@@ -297,8 +299,10 @@ export function dueLabel(due) {
 export function textOf(item) {
   const k = KINDS[item.kind];
   if (!k) return '';
+  const extra = [].concat(...k.fields.filter(f => f.type === 'links' || f.type === 'refs').map(f => (item[f.key] || [])
+    .map(x => [x.label, x.url, x.title, x.text, x.doi, x.authors, x.journal].filter(Boolean).join(' '))));
   return k.fields.filter(f => ['text', 'textarea', 'url', 'select'].includes(f.type))
-    .map(f => item[f.key] || '').concat(item.tags || []).join(' ').toLowerCase();
+    .map(f => item[f.key] || '').concat(item.tags || [], extra).join(' ').toLowerCase();
 }
 
 // One-tap import of what is already on the CV, so the profile isn't empty on day one.

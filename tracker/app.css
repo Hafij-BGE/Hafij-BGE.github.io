@@ -376,3 +376,19 @@ pre.plain { margin: 0; background: transparent; border: 0; padding: 0; font-size
 .tilet { overflow-wrap: break-word; hyphens: auto; }
 .wshead.k-article { border-top-color: var(--accent); }
 .wshead.k-article .wsicon { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+/* article links & references */
+.linklist .row { gap: 10px; align-items: flex-start; }
+.ltype { flex: none; font-size: .7rem; font-weight: 700; padding: 3px 8px; border-radius: 999px; margin-top: 2px; white-space: nowrap; color: var(--muted); background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.ltype.t-github { color: var(--ink); } .ltype.t-dataset, .ltype.t-accession { color: var(--wet); background: color-mix(in srgb, var(--wet) 12%, transparent); }
+.ltype.t-preprint, .ltype.t-journal { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ltype.t-protocol, .ltype.t-supplement { color: var(--dry); background: color-mix(in srgb, var(--dry) 12%, transparent); }
+.linklist a.t { text-decoration: none; color: var(--link); }
+.linklist .s { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .linklist .row { flex-wrap: wrap; } .linklist .rowmain { flex-basis: calc(100% - 110px); } }
+.refs { margin: 12px 0 4px; padding-left: 1.6em; font-size: .93rem; }
+.refs li { padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.refs li { position: relative; padding-right: 68px; }
+.refs .rtext { display: block; overflow-wrap: anywhere; line-height: 1.45; }
+.refs .ract { position: absolute; right: 0; top: 2px; display: flex; }
+.rfq { width: 100%; margin-top: 12px; }
+.vlist { margin: 4px 0 0; padding-left: 1.2em; } .vlist li { margin: 4px 0; overflow-wrap: anywhere; } ul.vlist { list-style: none; padding-left: 0; }
