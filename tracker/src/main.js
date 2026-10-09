@@ -2171,11 +2171,12 @@ async function checkClaudeUpdates(manual) {
     const done = [...(meta.done || [])];
     const pending = ((await res.json()).files || []).filter(id => !done.includes(id));
     const undo = { added: [], previous: [], at: Date.now() };
-    let added = 0, changed = 0, failed = 0;
+    let added = 0, changed = 0, failed = 0, aiAdded = 0;
     for (const id of pending) {
       try {
         const f = await (await fetch(`updates/${encodeURIComponent(id)}.json`, { cache: 'no-store' })).json();
         const payload = await unlockUpdate(meta.code, f);
+        if (payload.ai && Array.isArray(payload.ai.channels)) aiAdded += await addAiChannels(payload.ai.channels);
         const plan = mergePlan((payload.items || []).map(({ _delete, ...x }) => x));   // never delete
         plan.out.forEach(r => { if (byId[r.id]) undo.previous.push(byId[r.id]); else undo.added.push(r.id); });
         if (plan.out.length) await store.bulkSave(plan.out);
@@ -2188,12 +2189,32 @@ async function checkClaudeUpdates(manual) {
       const log = [...(meta.log || []), { at: Date.now(), added, changed }].slice(-20);
       await store.setMeta('claude', { ...meta, done, log, undo: (added || changed) ? undo : meta.undo || null });
     }
-    if (added || changed) toast(`Claude's update added ${added} and updated ${changed} records`);
+    if (aiAdded) toast(`Claude added ${aiAdded} AI channel${aiAdded > 1 ? 's' : ''} — Ask AI is ready`);
+    else if (added || changed) toast(`Claude's update added ${added} and updated ${changed} records`);
     else if (failed) toast(`An update from Claude could not be unlocked with your current code.`, true);
     else if (manual) toast('You are up to date.');
     if (route().view === 'settings') renderClaudeCard();
   } catch (e) { if (manual) toast('Could not check for updates right now.', true); }
   finally { updBusy = false; }
+}
+// AI channels delivered in an encrypted update: added to the private settings unless already there.
+async function addAiChannels(list) {
+  const cfg = { channels: [], ...((await store.getMeta('ai')) || {}) };
+  let n = 0;
+  for (const c of list) {
+    if (!c || !PROVIDERS[c.provider] || typeof c.key !== 'string' || c.key.length < 10 || c.key.length > 300) continue;
+    if (cfg.channels.some(x => x.provider === c.provider && x.key === c.key)) continue;
+    let model = typeof c.model === 'string' ? c.model.trim() : '';
+    if (!model) {
+      try { model = pickDefault(c.provider, await listModels(c.provider, c.key)); } catch (e) {}
+      model = model || PROVIDERS[c.provider].defaultModel;
+    }
+    if (!model) continue;
+    cfg.channels.push({ id: newId(), provider: c.provider, key: c.key.trim(), model, label: typeof c.label === 'string' ? c.label.slice(0, 60) : '', enabled: true });
+    n++;
+  }
+  if (n) { await store.setMeta('ai', cfg); aiCfg = cfg; renderAiCard(); }
+  return n;
 }
 async function undoClaudeUpdate() {
   const meta = await store.getMeta('claude');
