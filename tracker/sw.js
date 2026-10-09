@@ -1,6 +1,6 @@
 // Offline shell: serve the app from cache, refresh it in the background.
 // Your records themselves are cached and synced by Firebase, not here.
-const CACHE = 'research-log-v3';
+const CACHE = 'research-log-v4';
 const SHELL = ['./', './index.html', './app.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

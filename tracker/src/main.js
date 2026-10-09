@@ -1,7 +1,6 @@
 import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
 
-const APK_URL = 'https://github.com/Hafij-BGE/Hafij-BGE.github.io/releases/latest/download/research-log.apk';
 // Site config (public identifiers, not secrets — data is protected by Firestore rules),
 // or a setup pasted on this device as a fallback.
 const cfg = parseSetup(JSON.stringify(window.FIREBASE_CONFIG || {})) || loadSetup();
@@ -307,9 +306,9 @@ function settingsHTML() {
     <p class="muted">Use the same app on your phone and computer.</p>
     <div class="btnrow">
       ${deferredInstall ? `<button class="btn primary" data-act="install">${icon('download')} Install on this device</button>` : ''}
-      <a class="btn" href="${APK_URL}">${icon('download')} Download Android app (.apk)</a>
+
     </div>
-    <p class="small muted">On Android you can also open this page in Chrome and choose <b>⋮ → Add to Home screen</b>.</p>
+    <p class="small muted">On Android, open this page in Chrome and choose <b>⋮ → Add to Home screen</b>, or install your private Android app.</p>
   </section>
   <section class="card">
     <h3>Backup</h3>
