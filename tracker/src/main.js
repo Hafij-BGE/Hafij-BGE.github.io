@@ -6,7 +6,7 @@ import {
 } from './files.js';
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
 import { LINK_TYPES, linkTypeLabel, guessLink, linkHref, formatRef, sameRef, lookupDoi, cleanDoi, parseBib, parseRis, parsePasted, toBib, toRis, dataStatement } from './refs.js';
-import { PROVIDERS, askChain, listModels, pickDefault, aiState, restingUntil, clearRest, parseDelimited, describe, describeText, fmtNum } from './ai.js';
+import { PROVIDERS, askChain, listModels, pickDefault, aiState, restingUntil, clearRest, freeModels, parseDelimited, describe, describeText, fmtNum } from './ai.js';
 import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
@@ -196,7 +196,7 @@ function render() {
   else if (r.section) html = sectionHTML(r);
   else if (r.view === 'search') html = searchHTML();
   else if (r.view === 'ai') html = aiHTML();
-  else if (r.view === 'settings') { html = settingsHTML(); setTimeout(renderClaudeCard, 0); }
+  else if (r.view === 'settings') { html = settingsHTML(); setTimeout(() => { renderClaudeCard(); fillAutoLists(); }, 0); }
   else html = homeHTML();
   view.innerHTML = html;
   view.scrollTop = 0;
@@ -1341,7 +1341,7 @@ function aiCardInner() {
       ${Object.entries(PROVIDERS).map(([k, p]) => `<a href="${p.site}" target="_blank" rel="noopener">${esc(p.name)}</a>`).join(' · ')}.</p>
     ${list.length ? `<ol class="rows chans">${list.map((c, i) => { const [cls, txt] = chStatus(c); return `<li class="row">
       <span class="chnum">${i + 1}</span>
-      <span class="rowmain"><span class="t">${esc(chName(c))}</span><span class="s">${esc(c.model || 'no model chosen')}</span>
+      <span class="rowmain"><span class="t">${esc(chName(c))}</span><span class="s">${c.model === 'auto' ? `Best free models, switching between them<span class="orauto" data-ch="${c.id}"></span>` : esc(c.model || 'no model chosen')}</span>
         <span class="s"><span class="badge ${cls}">${esc(txt)}</span></span></span>
       <span class="tail">
         <button type="button" class="iconbtn sm" data-act="ai-up" data-id="${c.id}" aria-label="Move up" ${i ? '' : 'disabled'}>↑</button>
@@ -1353,7 +1353,15 @@ function aiCardInner() {
       ${list.length ? `<a class="btn" href="#/ai">${icon('spark')} Open Ask AI</a>` : ''}</div>
     <p class="small muted">Keys are kept in your private account settings (synced to your devices) and are sent only to their own provider. Free plans may use what you send to improve their models — the Private switch on the Ask AI page keeps notes, emails and raw data out.</p>`;
 }
-function renderAiCard() { const el = app.querySelector('#aiCard'); if (el) el.innerHTML = aiCardInner(); }
+function renderAiCard() { const el = app.querySelector('#aiCard'); if (el) { el.innerHTML = aiCardInner(); fillAutoLists(); } }
+// Show which free models "auto" will try, in order.
+async function fillAutoLists() {
+  const spots = app.querySelectorAll('.orauto');
+  if (!spots.length) return;
+  let list = [];
+  try { list = (await freeModels()).slice(0, 6); } catch (e) { return; }
+  spots.forEach(s => { s.innerHTML = list.length ? `: ${list.map((m, i) => `${i + 1}. ${esc(m.replace(/:free$/, ''))}`).join(' · ')}` : ''; });
+}
 
 function channelForm(id) {
   const c = aiCfg.channels.find(x => x.id === id) || { id: newId(), provider: 'openrouter', key: '', model: '', label: '', enabled: true };
@@ -1365,7 +1373,7 @@ function channelForm(id) {
       <div class="fld half"><label for="ch_label">Name (optional)</label><input id="ch_label" type="text" value="${esc(c.label)}" placeholder="e.g. Gemini (fast)"></div>
       <div class="fld"><label for="ch_key">API key — <a id="ch_site" href="${PROVIDERS[c.provider].site}" target="_blank" rel="noopener">get a free key</a></label>
         <input id="ch_key" type="password" autocomplete="off" spellcheck="false" value="${esc(c.key)}" placeholder="${esc(PROVIDERS[c.provider].keyHint)}"></div>
-      <div class="fld"><label for="ch_model">Model</label>
+      <div class="fld"><label for="ch_model">Model <span class="muted">— for OpenRouter, “auto” uses the strongest free models and switches between them</span></label>
         <div class="rowflex"><input id="ch_model" type="text" list="ch_models" value="${esc(c.model)}" placeholder="Tap “Find models”"><datalist id="ch_models"></datalist>
         <button type="button" class="btn" data-find>Find models</button></div></div>
       <div class="fld"><label class="toggle big nopad"><input id="ch_on" type="checkbox" ${c.enabled !== false ? 'checked' : ''}> Use this channel</label></div>
@@ -1386,7 +1394,9 @@ function channelForm(id) {
       const models = await listModels($('#ch_prov').value, $('#ch_key').value.trim());
       $('#ch_models').innerHTML = models.map(m => `<option value="${esc(m)}">`).join('');
       if (!$('#ch_model').value) $('#ch_model').value = pickDefault($('#ch_prov').value, models);
-      msg(`${models.length} models available${$('#ch_prov').value === 'openrouter' ? ' for free' : ''}. Click the Model box to choose one.`);
+      const orAuto = $('#ch_prov').value === 'openrouter';
+      msg(orAuto ? `${plural(models.length - 2, 'free model')}. “auto” tries the strongest first: ${(await freeModels(true)).slice(0, 4).map(m => m.replace(/:free$/, '')).join(', ')}…`
+        : `${models.length} models available. Click the Model box to choose one.`);
     } catch (e) { msg(e.message || 'Could not list models.', true); }
   };
   const read = () => ({ ...c, provider: $('#ch_prov').value, key: $('#ch_key').value.trim(), model: $('#ch_model').value.trim(), label: $('#ch_label').value.trim(), enabled: $('#ch_on').checked });

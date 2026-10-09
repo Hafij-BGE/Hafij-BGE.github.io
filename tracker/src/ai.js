@@ -3,7 +3,7 @@
 // own, kept in his private settings; requests go straight from his browser to the provider.
 
 export const PROVIDERS = {
-  openrouter: { name: 'OpenRouter', site: 'https://openrouter.ai/', keyHint: 'sk-or-…', defaultModel: 'openrouter/free' },
+  openrouter: { name: 'OpenRouter', site: 'https://openrouter.ai/', keyHint: 'sk-or-…', defaultModel: 'auto' },
   gemini: { name: 'Google Gemini', site: 'https://aistudio.google.com/', keyHint: 'AIza…', defaultModel: '' },
   groq: { name: 'Groq', site: 'https://console.groq.com/', keyHint: 'gsk_…', defaultModel: '' },
   mistral: { name: 'Mistral', site: 'https://console.mistral.ai/', keyHint: '', defaultModel: 'mistral-small-latest' },
@@ -22,7 +22,38 @@ export const clearRest = id => setState(id, { until: 0 });
 const nextUtcMidnight = () => { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.getTime(); };
 
 class ChannelError extends Error {
-  constructor(msg, kind, rest) { super(msg); this.kind = kind; this.rest = rest; }
+  constructor(msg, kind, rest, account) { super(msg); this.kind = kind; this.rest = rest; this.account = account; }
+}
+
+/* ---- OpenRouter "auto": the strongest free models, tried one after another ----
+   The order is a rule of thumb (larger, newer model families first), not a benchmark. */
+const FREE_KEY = 'rl.orFree';
+const RANK = [/deepseek.*(v4|v3\.[1-9]|chat-v3|r1)/, /qwen3.*(235b|480b|max|coder)/, /gpt-oss-120b/, /kimi|moonshot/, /glm-(4\.[5-9]|[5-9])/,
+  /llama-4-maverick/, /qwen3/, /llama-3\.3-70b|llama-3\.1-405b/, /gemini/, /mistral-(medium|large|small-3)|devstral/, /gemma-3-27b|nemotron.*(super|ultra|70b)/];
+const tiny = /(^|[^\d])(0\.5|1|1\.5|2|3|4|7|8|9)b\b|-mini|nano|tiny|small(?!-3)/i;
+export async function freeModels(force) {
+  try { const c = JSON.parse(localStorage.getItem(FREE_KEY) || 'null'); if (!force && c && Date.now() - c.at < 6 * 3600e3 && c.list.length) return c.list; } catch (e) {}
+  const r = await fetch('https://openrouter.ai/api/v1/models');
+  if (!r.ok) throw new Error('OpenRouter did not answer.');
+  const all = ((await r.json()).data || []).filter(m => m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0 && m.id !== 'openrouter/free'
+    && !/image|vision-only|embed|tts|audio|guard/i.test(m.id));
+  const score = m => { const i = RANK.findIndex(re => re.test(m.id.toLowerCase())); return (i < 0 ? RANK.length : i) * 10 + (tiny.test(m.id) ? 5 : 0); };
+  const list = all.sort((a, b) => score(a) - score(b) || (b.context_length || 0) - (a.context_length || 0) || (b.created || 0) - (a.created || 0)).map(m => m.id);
+  try { localStorage.setItem(FREE_KEY, JSON.stringify({ at: Date.now(), list })); } catch (e) {}
+  return list;
+}
+// One channel set to "auto" becomes several: one per top free model, each resting on its own.
+async function expand(channels) {
+  const out = [];
+  for (const c of channels) {
+    if (c.provider === 'openrouter' && c.model === 'auto') {
+      let top = [];
+      try { top = (await freeModels()).slice(0, 6); } catch (e) {}
+      if (!top.length) top = ['openrouter/free'];
+      top.forEach(m => out.push({ ...c, id: `${c.id}|${m}`, parent: c.id, model: m, label: `${c.label || PROVIDERS.openrouter.name} · ${m.replace(/^[^/]+\//, '').replace(/:free$/, '')}` }));
+    } else out.push(c);
+  }
+  return out;
 }
 
 /* ---- one request to one channel ---- */
@@ -54,8 +85,11 @@ async function callOnce(ch, messages, signal) {
     const msg = String(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
     const retry = Number(res.headers.get('retry-after')) * 1000;
     const daily = /per[ -]?day|daily|quota|RPD|free-models-per-day|exhausted/i.test(msg);
-    if (res.status === 429 || res.status === 402 || (res.status === 403 && daily)) {
-      throw new ChannelError(daily ? 'daily limit reached' : 'rate limit reached', 'limit', daily ? nextUtcMidnight() - Date.now() : (retry || 60e3));
+    if (res.status === 402) throw new ChannelError(ch.provider === 'openrouter' ? 'this model needs credits — use “auto” or a :free model' : 'no credit left on this account', 'credits', 24 * 3600e3);
+    if (res.status === 429 || (res.status === 403 && daily)) {
+      // OpenRouter's daily free allowance covers the whole account, not just this model.
+      const account = ch.provider === 'openrouter' && /free-models-per-day|per[ -]?day/i.test(msg);
+      throw new ChannelError(daily ? 'daily limit reached' : 'rate limit reached', 'limit', daily ? nextUtcMidnight() - Date.now() : (retry || 60e3), account);
     }
     if (res.status === 401 || (res.status === 403 && /key|auth|permission/i.test(msg))) throw new ChannelError('key not accepted — check it in Settings', 'auth', 24 * 3600e3);
     if (res.status === 404 || (res.status === 400 && /model/i.test(msg))) throw new ChannelError(`model “${ch.model}” not available — pick another in Settings`, 'model', 3600e3);
@@ -78,21 +112,35 @@ async function callOnce(ch, messages, signal) {
 
 // Try each enabled channel in order, skipping those resting after a limit. Reports every switch.
 export async function askChain(channels, messages, { onTry, signal } = {}) {
-  const usable = channels.filter(c => c.enabled !== false && c.key && c.model);
+  const usable = await expand(channels.filter(c => c.enabled !== false && c.key && c.model));
   if (!usable.length) throw new Error('No AI channel is set up yet. Add one in Settings → AI channels.');
   const notes = [];
-  const fresh = usable.filter(c => !restingUntil(c.id));
+  const resting = c => restingUntil(c.id) || (c.parent && restingUntil(c.parent));
+  const fresh = usable.filter(c => !resting(c));
   // If every channel is resting, still try them all (a limit may have reset early).
   const order = fresh.length ? fresh : usable;
-  for (const ch of order) {
+  for (let k = 0; k < order.length; k++) {
+    const ch = order[k];
+    if (!ch) continue;
     onTry && onTry(ch, notes);
     try {
       const r = await callOnce(ch, messages, signal);
       setState(ch.id, { until: 0, last: Date.now(), error: '' });
+      if (ch.parent) setState(ch.parent, { last: Date.now(), error: '', until: 0 });
       return { ...r, channel: ch, notes };
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       setState(ch.id, { until: e.rest ? Date.now() + e.rest : 0, error: e.message, errAt: Date.now() });
+      if (ch.parent) {
+        if (e.account || e.kind === 'auth') {
+          setState(ch.parent, { until: Date.now() + e.rest, error: e.message, errAt: Date.now() });
+          notes.push(`${ch.label}: ${e.message}`);
+          // skip the other models of this account for now
+          for (let j = k + 1; j < order.length; j++) if (order[j] && order[j].parent === ch.parent) order[j] = null;
+          continue;
+        }
+        setState(ch.parent, { error: '', last: (aiState()[ch.parent] || {}).last });
+      }
       notes.push(`${ch.label || PROVIDERS[ch.provider].name}: ${e.message}`);
     }
   }
@@ -107,7 +155,7 @@ export async function listModels(provider, key) {
     const r = await fetch('https://openrouter.ai/api/v1/models');
     if (!r.ok) throw new Error('OpenRouter did not answer.');
     const list = ((await r.json()).data || []).filter(m => m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0);
-    return ['openrouter/free', ...list.map(m => m.id).sort()];
+    return ['auto', 'openrouter/free', ...list.map(m => m.id).sort()];
   }
   if (provider === 'gemini') {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(key)}`);
@@ -125,7 +173,7 @@ export function pickDefault(provider, models) {
     gemini: [/gemini-[\d.]+-flash$/, /flash(?!.*lite)/, /flash/],
     groq: [/gpt-oss-120b/, /llama.*70b/, /qwen/, /llama/],
     mistral: [/mistral-small-latest/, /mistral-medium-latest/, /small/],
-    openrouter: [/^openrouter\/free$/],
+    openrouter: [/^auto$/],
   }[provider] || [];
   for (const re of prefer) { const hit = models.filter(m => re.test(m)).sort().reverse()[0]; if (hit) return hit; }
   return models[0] || '';
