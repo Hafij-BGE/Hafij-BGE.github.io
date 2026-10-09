@@ -163,6 +163,18 @@ export const KINDS = {
       { key: 'tags', label: 'Tags', type: 'tags' },
     ],
   },
+  // Notepad pages (handwriting + typed text). They belong to a section or a folder ("where"),
+  // not to a tab of their own.
+  note: {
+    label: 'Note', plural: 'Notes', color: 'var(--amber)', notepad: true,
+    sort: (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+    sub: x => [x.pages > 1 ? `${x.pages} pages` : '', x.updatedAt ? new Date(x.updatedAt).toLocaleDateString() : ''].filter(Boolean).join(' · '),
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', required: true },
+      { key: 'notes', label: 'Typed text', type: 'textarea', rows: 8 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
   paper: {
     label: 'Paper', plural: 'Reading list', color: 'var(--dry)',
     sort: (a, b) => readRank(a.status) - readRank(b.status) || (b.year || 0) - (a.year || 0),

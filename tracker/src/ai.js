@@ -62,7 +62,9 @@ async function callOnce(ch, messages, signal) {
   try {
     if (ch.provider === 'gemini') {
       const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
-      const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+      // A message is text, or a list of parts: { type: 'text', text } / { type: 'image', mime, data (base64) }.
+      const toParts = c => (Array.isArray(c) ? c.map(p => (p.type === 'image' ? { inline_data: { mime_type: p.mime, data: p.data } } : { text: p.text })) : [{ text: c }]);
+      const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: toParts(m.content) }));
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ch.model)}:generateContent?key=${encodeURIComponent(ch.key)}`, {
         method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents, ...(sys ? { systemInstruction: { parts: [{ text: sys }] } } : {}), generationConfig: { temperature: 0.3 } }),
@@ -71,7 +73,8 @@ async function callOnce(ch, messages, signal) {
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ch.key}` };
       if (ch.provider === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Research Log'; }
       res = await fetch(`${OPENAI_BASE[ch.provider]}/chat/completions`, {
-        method: 'POST', signal, headers, body: JSON.stringify({ model: ch.model, messages, temperature: 0.3 }),
+        method: 'POST', signal, headers, body: JSON.stringify({ model: ch.model, temperature: 0.3,
+          messages: messages.map(m => (Array.isArray(m.content) ? { ...m, content: m.content.map(p => (p.type === 'image' ? { type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.data}` } } : { type: 'text', text: p.text })) } : m)) }),
       });
     }
   } catch (e) {

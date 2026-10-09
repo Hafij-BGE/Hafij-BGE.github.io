@@ -150,6 +150,40 @@ export class CloudStore extends Emitter {
     return snap.exists() ? snap.data() : null;
   }
   setMeta(name, data) { return setDoc(doc(this.db, 'users', this.user.uid, 'meta', name), clean(data)); }
+  /* ---- notepad ink: compressed, split into pieces if very large ---- */
+  inkRef(id, part) { return part == null ? doc(this.db, 'users', this.user.uid, 'inks', id) : doc(this.db, 'users', this.user.uid, 'inks', id, 'parts', chunkId(part)); }
+  async getInk(id) {
+    const snap = await getDoc(this.inkRef(id));
+    if (!snap.exists()) return null;
+    const m = snap.data();
+    if (!m.parts) return m.data ? m.data.toUint8Array() : null;
+    const ps = await getDocs(collection(this.db, 'users', this.user.uid, 'inks', id, 'parts'));
+    const parts = ps.docs.map(d => d.data()).filter(c => c.i < m.parts).sort((a, b) => a.i - b.i);
+    if (parts.length !== m.parts) throw new Error('This note is still syncing from another device. Try again in a moment.');
+    const out = new Uint8Array(parts.reduce((n, c) => n + c.data.toUint8Array().length, 0));
+    let o = 0; parts.forEach(c => { const u = c.data.toUint8Array(); out.set(u, o); o += u.length; });
+    return out;
+  }
+  async setInk(id, u8, oldParts = 0) {
+    if (u8.length <= CHUNK) {
+      await setDoc(this.inkRef(id), { data: Bytes.fromUint8Array(u8), parts: 0, size: u8.length, updatedAt: Date.now() });
+      for (let i = 0; i < oldParts; i++) deleteDoc(this.inkRef(id, i)).catch(() => {});
+      return 0;
+    }
+    const n = Math.ceil(u8.length / CHUNK);
+    const jobs = [];
+    for (let i = 0; i < n; i++) jobs.push(setDoc(this.inkRef(id, i), { i, data: Bytes.fromUint8Array(u8.subarray(i * CHUNK, (i + 1) * CHUNK)) }));
+    jobs.push(setDoc(this.inkRef(id), { parts: n, size: u8.length, updatedAt: Date.now() }));
+    for (let i = n; i < oldParts; i++) jobs.push(deleteDoc(this.inkRef(id, i)));
+    await Promise.all(jobs);
+    return n;
+  }
+  async deleteInk(id, parts = 0) {
+    const jobs = [deleteDoc(this.inkRef(id))];
+    for (let i = 0; i < parts; i++) jobs.push(deleteDoc(this.inkRef(id, i)));
+    return Promise.all(jobs).catch(() => {});
+  }
+
   /* ---- read-only links and the public website feed (outside the private area) ---- */
   setShare(id, data) { return setDoc(doc(this.db, 'shares', id), { ...data, owner: this.user.uid, updatedAt: Date.now() }); }
   deleteShare(id) { return deleteDoc(doc(this.db, 'shares', id)); }
@@ -254,6 +288,9 @@ export class LocalStore extends Emitter {
   async setMeta(name, data) { try { localStorage.setItem('rl.meta.' + name, JSON.stringify(data)); } catch (e) {} }
   async setShare() { throw new Error('Sign in with Google to share.'); }
   async deleteShare() {} async setSite() { throw new Error('Sign in with Google to update the website.'); }
+  async getInk(id) { try { const v = localStorage.getItem('rl.ink.' + id); return v ? Uint8Array.from(atob(v), c => c.charCodeAt(0)) : null; } catch (e) { return null; } }
+  async setInk(id, u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); try { localStorage.setItem('rl.ink.' + id, btoa(s)); } catch (e) { throw new Error('This browser is out of space for notes. Sign in with Google to keep more.'); } return 0; }
+  async deleteInk(id) { try { localStorage.removeItem('rl.ink.' + id); } catch (e) {} }
   // Files need Google sync; this browser alone has too little room for them.
   async putFile() { throw new Error('Sign in with Google to store files.'); }
   async replaceFile() { throw new Error('Sign in with Google to store files.'); }

@@ -6,6 +6,7 @@ import {
 } from './files.js';
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
 import { LINK_TYPES, linkTypeLabel, guessLink, linkHref, formatRef, sameRef, lookupDoi, cleanDoi, parseBib, parseRis, parsePasted, toBib, toRis, dataStatement } from './refs.js';
+import { Pad, COLORS, PAPERS, emptyInk, encodeInk, decodeInk, pageImage, pageCanvas, pageHasInk } from './notepad.js';
 import { PROVIDERS, askChain, listModels, pickDefault, aiState, restingUntil, clearRest, freeModels, parseDelimited, describe, describeText, fmtNum } from './ai.js';
 import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
@@ -79,6 +80,11 @@ const I = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   github: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>',
+  pen: '<path d="M4 20l4-1L19 8a2.1 2.1 0 0 0-3-3L5 16z"/><path d="M14 7l3 3"/>',
+  hl: '<path d="M9 11l-5 5v3h3l5-5"/><path d="M9 11l6-6 4 4-6 6z"/><path d="M14 20h6"/>',
+  eraser: '<path d="M8 20h12M5.5 14.5l7-7a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 19H8z"/><path d="M9 11l5 5"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
   person: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
@@ -91,6 +97,7 @@ function route() {
   if (sec) {
     r.section = sec;
     r.kind = sec.kinds.includes(p[1]) ? p[1] : sec.kinds[0];
+    if (p[1] === 'notes') { r.notes = true; r.noteId = p[2] || null; r.where = sec.id; return r; }
     if (p[2] === 'new') r.edit = 'new';
     if (p[2] === 'edit' && p[3]) r.edit = p[3];
     // A record's own folder (PhD applications, research articles):
@@ -104,6 +111,7 @@ function route() {
         if (KINDS[k]) { r.kind = k; r.edit = rest[ei + 2] || 'new'; }
         rest = rest.slice(0, ei);
       }
+      if (rest[0] === 'notes') { r.notes = true; r.noteId = rest[1] || null; r.where = 'ws:' + r.ws; rest = []; }
       r.folder = rest[0] === 'f' ? rest.slice(1).map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } }).join('/') : '';
       r.base = wsHref(r.ws, r.folder, r.wsKind);
     }
@@ -192,7 +200,8 @@ function render() {
   const r = route();
   const view = app.querySelector('#view');
   let html = '';
-  if (r.ws) html = workspaceHTML(r);
+  if (r.notes) html = notesListHTML(r);
+  else if (r.ws) html = workspaceHTML(r);
   else if (r.section) html = sectionHTML(r);
   else if (r.view === 'search') html = searchHTML();
   else if (r.view === 'ai') html = aiHTML();
@@ -207,16 +216,17 @@ function render() {
   if (ui.drawer && (ui.drawer !== currentScope(r) || r.view === 'ai')) closeDrawer();
   renderAiFab();
   const fab = app.querySelector('#fab');
-  fab.hidden = !r.section || !!r.ws;
+  fab.hidden = !r.section || !!r.ws || !!r.notes;
   if (r.section) fab.setAttribute('aria-label', 'Add ' + KINDS[r.kind].label.toLowerCase());
   openEditorFromRoute();
+  if (r.noteId) openPad(r.noteId); else if (P) closePad(true);
 }
 
 function renderChrome() {
   const r = route();
   app.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === (r.section ? r.section.id : r.view)));
   const titles = { home: 'Research Log', search: 'Search', settings: 'Settings', ai: 'Ask AI' };
-  app.querySelector('#title').textContent = r.ws ? WS[r.wsKind].title : r.section ? r.section.label : titles[r.view] || 'Research Log';
+  app.querySelector('#title').textContent = r.notes ? `${r.ws ? WS[r.wsKind].title : r.section.label} · Notepad` : r.ws ? WS[r.wsKind].title : r.section ? r.section.label : titles[r.view] || 'Research Log';
   renderStatus();
 }
 
@@ -252,6 +262,7 @@ function shellHTML() {
     <div id="upbar" class="upbar" hidden></div>
     <button type="button" id="aifab" class="aifab" data-act="ai-open" hidden></button>
     <aside id="aidrawer" class="aidrawer" hidden aria-label="Ask AI"></aside>
+    <div id="pad" class="pad" hidden></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </div>`;
 }
@@ -346,9 +357,7 @@ function sectionHTML(r) {
   if (f) list = list.filter(x => textOf(x).includes(f));
   list.sort(K.sort);
   return `
-  <div class="seg" role="tablist">
-    ${r.section.kinds.map(k => `<a role="tab" href="#/${r.section.id}/${k}" class="${k === r.kind ? 'on' : ''}" aria-selected="${k === r.kind}">${KINDS[k].plural}<span>${items.filter(x => x.kind === k).length}</span></a>`).join('')}
-  </div>
+  ${segHTML(r.section, r.kind)}
   <div class="toolbar">
     <input id="filter" class="filter" type="search" placeholder="Filter ${K.plural.toLowerCase()}…" value="${esc(ui.filters[r.kind] || '')}" aria-label="Filter">
     ${WS[r.kind] && canPickFolder ? `<label class="btn">${icon('folder')} ${WS[r.kind].importLabel}<input type="file" data-act="importfolder" data-kind="${r.kind}" webkitdirectory multiple hidden></label>` : ''}
@@ -396,7 +405,7 @@ function linkOf(x) {
 
 function rowHTML(x, _i, _all, hrefOverride) {
   const K = KINDS[x.kind];
-  const href = hrefOverride || (WS[x.kind] ? wsHref(x.id, '', x.kind) : `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`);
+  const href = hrefOverride || (x.kind === 'note' ? notesHref(x.where, x.id) : WS[x.kind] ? wsHref(x.id, '', x.kind) : `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`);
   const nfiles = WS[x.kind] ? files.filter(f => f.app === x.id).length : 0;
   const badge = K.badge && K.badge(x);
   const warn = K.warn && K.warn(x);
@@ -810,6 +819,7 @@ function wsRootHTML(r, a, own, all) {
   <h3 class="grouph">${esc(a.folderName || 'Folders')}</h3>
   ${tilesHTML(a, own, top, `
     <button type="button" class="tile readme" data-act="readme"><span class="tileic">${icon('note')}</span><span class="tilet">${esc(a.readmeName || 'README.md')}</span><span class="tiles-s">${a.notes ? 'Notes & checklist' : 'Empty — tap to write'}</span></button>
+    <a class="tile notes" href="${notesHref('ws:' + a.id)}"><span class="tileic">${icon('pen')}</span><span class="tilet">Notepad</span><span class="tiles-s">${notesOf('ws:' + a.id).length ? plural(notesOf('ws:' + a.id).length, 'note') : 'Write or type'}</span></a>
     <button type="button" class="tile add" data-act="newfolder" data-parent=""><span class="tileic">${icon('folderplus')}</span><span class="tilet">New folder</span><span class="tiles-s">&nbsp;</span></button>`)}
   ${a.kind === 'article' ? linksCardHTML(a) + refsCardHTML(a) : ''}
   ${inFolder(own, '').length ? `<h3 class="grouph">Files in this folder</h3>${fileRowsHTML(inFolder(own, ''))}` : ''}
@@ -1448,7 +1458,7 @@ function scopeInfo(scope) {
     if (!a) return null;
     const linked = new Set([id]);
     KINDS[a.kind].fields.forEach(f => { if (f.type === 'ref' && a[f.key]) linked.add(a[f.key]); });
-    const pool = items.filter(x => linked.has(x.id) || KINDS[x.kind].fields.some(f => f.type === 'ref' && x[f.key] === id));
+    const pool = items.filter(x => linked.has(x.id) || KINDS[x.kind].fields.some(f => f.type === 'ref' && x[f.key] === id) || (x.kind === 'note' && x.where === scope));
     const own = filesOf(id);
     return {
       title: a.title, pool, kinds: [...new Set(pool.map(x => x.kind))],
@@ -1462,9 +1472,9 @@ function scopeInfo(scope) {
   if (scope.startsWith('sec:')) {
     const sec = SECTIONS.find(s => s.id === scope.slice(4));
     if (!sec) return null;
-    const pool = items.filter(x => sec.kinds.includes(x.kind));
+    const pool = items.filter(x => sec.kinds.includes(x.kind) || (x.kind === 'note' && x.where === sec.id));
     return {
-      title: sec.label, pool, kinds: sec.kinds,
+      title: sec.label, pool, kinds: [...sec.kinds, 'note'],
       sees: `your ${sec.kinds.map(k => KINDS[k].plural.toLowerCase()).join(', ')} (${pool.length} records)`,
       hints: {
         lab: ['Summarise my experiments this month.', 'Which samples or reagents expire soon?', 'Which protocols did I use most?'],
@@ -1518,6 +1528,7 @@ function chatPanelHTML(scope, page) {
   </div>
   <form class="aiform">
     <label class="iconbtn" title="Attach a data file (CSV, TSV, TXT, MD)" aria-label="Attach a data file">${icon('upload')}<input type="file" accept=".csv,.tsv,.txt,.md,.json,text/csv,text/plain" data-act="ai-file" hidden></label>
+    <button type="button" class="iconbtn aiwrite" data-act="ai-write" title="Write your question with the stylus" aria-label="Write your question by hand">${icon('pen')}</button>
     <textarea class="aiq" rows="1" placeholder="Ask about ${esc(info.global ? 'your research' : info.title)}…" aria-label="Your question">${esc(A.draft)}</textarea>
     <button type="submit" class="btn primary" ${A.busy ? 'disabled' : ''}>Send</button>
   </form>
@@ -1666,12 +1677,271 @@ function renderAiFab() {
   const b = app.querySelector('#aifab');
   if (!b) return;
   const r = route(), scope = currentScope(r);
-  b.hidden = !scope || !!ui.drawer || r.view === 'ai' || !!r.edit || store.mode !== 'cloud';
+  b.hidden = !scope || !!ui.drawer || r.view === 'ai' || !!r.edit || !!r.noteId || store.mode !== 'cloud';
   if (!b.hidden) {
     const info = scopeInfo(scope), A = chatOf(scope);
     b.innerHTML = `${icon('spark')}<span>Ask AI${info && !info.global ? ` · ${esc(info.title.length > 18 ? info.title.slice(0, 17) + '…' : info.title)}` : ''}</span>${A.msgs.length ? `<i>${A.msgs.filter(m => m.role === 'bot').length}</i>` : ''}`;
     b.classList.toggle('lift', !!r.section && !r.ws);
   }
+}
+
+/* ---------------- Notepad (handwriting + typed text) ----------------
+   Every section and every folder has its own notepad. A note is a record (title, typed text,
+   a small preview) plus its ink, which is kept compressed in users/{uid}/inks/{id}. */
+const notesHref = (where, id) => {
+  const w = where || 'research';
+  const base = w.startsWith('ws:') ? wsHref(w.slice(3), '') : `#/${w}`;
+  return `${base}/notes${id ? '/' + id : ''}`;
+};
+const whereLabel = w => (!w ? '' : w.startsWith('ws:') ? (byId[w.slice(3)] || {}).title || 'Folder' : (SECTIONS.find(s => s.id === w) || {}).label || w);
+const notesOf = where => items.filter(x => x.kind === 'note' && x.where === where).sort(KINDS.note.sort);
+let penSeen = false;
+try { penSeen = localStorage.getItem('rl.penSeen') === '1'; } catch (e) {}
+function markPen() {
+  if (!penSeen) { penSeen = true; try { localStorage.setItem('rl.penSeen', '1'); } catch (e) {} }
+  document.body.classList.add('has-pen');
+}
+if (penSeen) document.body.classList.add('has-pen');
+addEventListener('pointerdown', e => { if (e.pointerType === 'pen') markPen(); }, true);
+
+function notesListHTML(r) {
+  const where = r.where, list = notesOf(where);
+  const f = (ui.filters.__notes || '').trim().toLowerCase();
+  const shown = f ? list.filter(x => textOf(x).includes(f)) : list;
+  const head = r.ws ? `${crumbsHTML(byId[r.ws], 'Notepad')}<div class="folderhead"><span class="wsicon">${icon('pen')}</span><div><h2>Notepad</h2><p class="small muted">${esc(whereLabel(where))}</p></div></div>`
+    : segHTML(r.section, 'notes');
+  return `${head}
+  <div class="toolbar">
+    ${list.length > 4 ? `<input id="notefilter" class="filter" type="search" placeholder="Search notes…" value="${esc(ui.filters.__notes || '')}" aria-label="Search notes">` : '<span style="flex:1"></span>'}
+    <button type="button" class="btn primary" data-act="note-new">${icon('plus')} New note</button>
+  </div>
+  ${shown.length ? `<div class="notegrid">${shown.map(n => `<a class="notecard" href="${notesHref(where, n.id)}">
+      <span class="notethumb">${n.thumb ? `<img src="${esc(n.thumb)}" alt="">` : `<i class="paper-${esc(n.paper || 'lined')}"></i>`}</span>
+      <b>${esc(n.title || 'Untitled note')}</b>
+      <span class="small muted">${esc(KINDS.note.sub(n))}</span>
+      ${n.notes ? `<span class="noteex small">${esc(n.notes.slice(0, 90))}</span>` : ''}
+    </a>`).join('')}</div>`
+    : `<div class="empty">${icon('pen')}<p>${f ? 'No matching notes.' : `No notes in ${esc(whereLabel(where))} yet.`}</p>
+      ${f ? '' : `<p class="small">Write with a stylus, your finger or a mouse — or type.</p><button type="button" class="btn primary" data-act="note-new">${icon('plus')} New note</button>`}</div>`}`;
+}
+function segHTML(sec, active) {
+  return `<div class="seg" role="tablist">
+    ${sec.kinds.map(k => `<a role="tab" href="#/${sec.id}/${k}" class="${k === active ? 'on' : ''}" aria-selected="${k === active}">${KINDS[k].plural}<span>${items.filter(x => x.kind === k).length}</span></a>`).join('')}
+    <a role="tab" href="#/${sec.id}/notes" class="${active === 'notes' ? 'on' : ''}" aria-selected="${active === 'notes'}">${icon('pen')} Notepad<span>${notesOf(sec.id).length}</span></a>
+  </div>`;
+}
+function newPadNote(where) {
+  const n = { id: newId(), kind: 'note', title: `Note ${new Date().toLocaleDateString()}`, where, pages: 1, paper: (ui.lastPaper || 'lined'), createdAt: Date.now() };
+  store.save(n);
+  pendingOpen = n;
+  go(notesHref(where, n.id));
+}
+
+/* ---- the full-screen notepad ---- */
+let P = null;   // { id, where, ink, pad, dirty, timer, parts, saving }
+if (location.hostname === 'localhost') window.__pad = () => P;   // for local testing only
+async function openPad(id) {
+  const el = app.querySelector('#pad');
+  if (!el || (P && P.id === id)) return;
+  if (P) await closePad(true);
+  const rec = byId[id] || (pendingOpen && pendingOpen.id === id ? pendingOpen : null);
+  if (!rec) { if (items.length) go(notesHref(route().where)); return; }
+  P = { id, where: rec.where, dirty: false, parts: 0, tab: ui.padTab || 'ink' };
+  el.hidden = false;
+  document.body.classList.add('noscroll');
+  el.innerHTML = `<div class="pad-loading">${icon('pen')}<p>Opening note…</p></div>`;
+  let ink = null;
+  try { const u8 = await store.getInk(id); if (u8) ink = decodeInk(u8); }
+  catch (e) { toast(e.message || 'Could not open this note.', true); }
+  if (!P || P.id !== id) return;
+  P.ink = ink || emptyInk(rec.paper);
+  P.parts = rec.inkParts || 0;
+  renderPad(rec);
+}
+function padToolsHTML() {
+  const t = P.pad || { tool: 'pen', color: COLORS[0], width: 3, penOnly: penSeen };
+  return `
+    <div class="pad-tools" role="toolbar" aria-label="Pen tools">
+      <button type="button" class="ptool ${t.tool === 'pen' ? 'on' : ''}" data-act="pad-tool" data-tool="pen" aria-label="Pen" title="Pen">${icon('pen')}</button>
+      <button type="button" class="ptool ${t.tool === 'hl' ? 'on' : ''}" data-act="pad-tool" data-tool="hl" aria-label="Highlighter" title="Highlighter">${icon('hl')}</button>
+      <button type="button" class="ptool ${t.tool === 'eraser' ? 'on' : ''}" data-act="pad-tool" data-tool="eraser" aria-label="Eraser" title="Eraser (or use your pen's eraser end)">${icon('eraser')}</button>
+      <span class="psep"></span>
+      ${COLORS.map(c => `<button type="button" class="pcolor ${t.color === c ? 'on' : ''}" data-act="pad-color" data-color="${c}" style="--pc:${c}" aria-label="Colour ${c}"></button>`).join('')}
+      <span class="psep"></span>
+      <select class="pwidth" data-act="pad-width" aria-label="Line width">${[[1.5, 'Fine'], [3, 'Medium'], [5, 'Bold'], [8, 'Marker']].map(([w, l]) => `<option value="${w}" ${t.width === w ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button type="button" class="ptool" data-act="pad-undo" aria-label="Undo" title="Undo">${icon('undo')}</button>
+      <button type="button" class="ptool" data-act="pad-redo" aria-label="Redo" title="Redo">${icon('redo')}</button>
+      <span class="psep"></span>
+      <select class="ppaper" data-act="pad-paper" aria-label="Paper">${PAPERS.map(p => `<option value="${p}" ${P.ink.paper === p ? 'selected' : ''}>${p[0].toUpperCase() + p.slice(1)} paper</option>`).join('')}</select>
+      <label class="toggle ppen" title="When on, fingers scroll and only the stylus writes (palm rejection)"><input type="checkbox" data-act="pad-penonly" ${t.penOnly ? 'checked' : ''}> Pen only</label>
+    </div>`;
+}
+function renderPad(rec) {
+  const el = app.querySelector('#pad');
+  el.innerHTML = `<div class="pad-bar">
+      <button type="button" class="iconbtn" data-act="pad-close" aria-label="Back to notes">${icon('back')}</button>
+      <input class="pad-title" value="${esc(rec.title || '')}" aria-label="Note title" placeholder="Title">
+      <span class="pad-status small muted">Saved</span>
+      <div class="pad-tabs" role="tablist">
+        <button type="button" role="tab" class="${P.tab === 'ink' ? 'on' : ''}" data-act="pad-tab" data-tab="ink">${icon('pen')} Write</button>
+        <button type="button" role="tab" class="${P.tab === 'text' ? 'on' : ''}" data-act="pad-tab" data-tab="text">${icon('note')} Type</button>
+      </div>
+      <button type="button" class="iconbtn" data-act="pad-menu" aria-label="More">${icon('more')}</button>
+    </div>
+    <div class="pad-toolwrap" ${P.tab === 'ink' ? '' : 'hidden'}>${padToolsHTML()}</div>
+    <div class="pad-scroll" ${P.tab === 'ink' ? '' : 'hidden'}><div class="pad-pages"></div>
+      <div class="pad-more"><button type="button" class="btn" data-act="pad-addpage">${icon('plus')} Add page</button></div></div>
+    <div class="pad-text" ${P.tab === 'text' ? '' : 'hidden'}>
+      <textarea class="pad-ta" placeholder="Type here…" aria-label="Typed text">${esc(rec.notes || '')}</textarea>
+      <p class="small muted">Use <b>Read my handwriting</b> (⋯ menu) to turn a written page into text here.</p>
+    </div>`;
+  P.pad = new Pad(el.querySelector('.pad-pages'), P.ink, {
+    onChange: () => padDirty(),
+    onPen: () => { markPen(); const c = el.querySelector('[data-act=pad-penonly]'); if (c) c.checked = true; },
+  });
+  if (!penSeen) P.pad.penOnly = false;
+  el.querySelector('.pad-title').addEventListener('input', padDirty);
+  el.querySelector('.pad-ta').addEventListener('input', padDirty);
+}
+function padStatus(t) { const s = app.querySelector('#pad .pad-status'); if (s) s.textContent = t; }
+function padDirty() {
+  if (!P) return;
+  P.dirty = true; padStatus('Saving…');
+  clearTimeout(P.timer);
+  P.timer = setTimeout(() => savePad(), 1500);
+}
+async function savePad() {
+  if (!P || !P.dirty || !P.ink) return;
+  clearTimeout(P.timer);
+  if (P.saving) { P.again = true; return; }
+  P.saving = true; P.dirty = false;
+  const el = app.querySelector('#pad');
+  const rec = byId[P.id] || pendingOpen || {};
+  try {
+    const u8 = encodeInk(P.ink);
+    P.parts = await store.setInk(P.id, u8, P.parts);
+    const thumb = pageImage(P.ink, 0, 240, 'image/jpeg', 0.7);
+    const title = (el && el.querySelector('.pad-title') ? el.querySelector('.pad-title').value.trim() : rec.title) || 'Untitled note';
+    const text = el && el.querySelector('.pad-ta') ? el.querySelector('.pad-ta').value : rec.notes;
+    store.save({ ...rec, id: P.id, kind: 'note', where: P.where, title, notes: text || '', pages: P.ink.pages, paper: P.ink.paper, thumb, inkParts: P.parts, createdAt: rec.createdAt || Date.now() });
+    ui.lastPaper = P.ink.paper;
+    padStatus(navigator.onLine ? 'Saved' : 'Saved on this device');
+  } catch (e) { P.dirty = true; padStatus('Not saved'); toast(e.message || 'Could not save the note.', true); }
+  finally { if (P) { P.saving = false; if (P.again) { P.again = false; P.dirty = true; savePad(); } } }
+}
+async function closePad(silent) {
+  if (!P) return;
+  const cur = P;
+  if (cur.dirty) await savePad();
+  if (cur.pad) cur.pad.destroy();
+  P = null;
+  const el = app.querySelector('#pad');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+  document.body.classList.remove('noscroll');
+  if (!silent) { const r = route(); if (r.noteId) go(notesHref(cur.where)); }
+}
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && P && P.dirty) savePad(); });
+addEventListener('beforeunload', e => { if (P && P.dirty) { savePad(); e.preventDefault(); e.returnValue = ''; } });
+
+function padMenu() {
+  const pg = P.pad.visiblePage();
+  const inFolder = P.where.startsWith('ws:');
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button><h2>Note · page ${pg + 1} of ${P.ink.pages}</h2></div>
+    <div class="ovl-body"><div class="menu-list">
+      <button type="button" data-m="ocr">${icon('spark')} <span><b>Read my handwriting</b><small>Turns page ${pg + 1} into typed text with your Google Gemini channel.</small></span></button>
+      <button type="button" data-m="png">${icon('download')} <span><b>Download page ${pg + 1} as a picture</b><small>PNG image of this page.</small></span></button>
+      ${inFolder ? `<button type="button" data-m="tofolder">${icon('folder')} <span><b>Save page ${pg + 1} into this folder</b><small>Adds it as a PNG file next to your other files.</small></span></button>` : ''}
+      <button type="button" data-m="clear">${icon('eraser')} <span><b>Clear page ${pg + 1}</b><small>Removes the writing on this page (Undo brings it back).</small></span></button>
+      <button type="button" data-m="delete" class="danger">${icon('trash')} <span><b>Delete this note</b><small>Cannot be undone.</small></span></button>
+    </div></div>`);
+  el.querySelectorAll('[data-m]').forEach(b => b.onclick = async () => {
+    const m = b.dataset.m;
+    el._close();
+    if (m === 'ocr') return readHandwritingPage(pg);
+    if (m === 'png') return saveBlob(dataUrlBlob(pageImage(P.ink, pg, 2000)), `${cleanName(app.querySelector('#pad .pad-title').value || 'note')}_page${pg + 1}.png`);
+    if (m === 'tofolder') {
+      const name = `${cleanName(app.querySelector('#pad .pad-title').value || 'Note')}_page${pg + 1}.png`;
+      const file = new File([dataUrlBlob(pageImage(P.ink, pg, 2000))], name, { type: 'image/png', lastModified: Date.now() });
+      return queueUpload(P.where.slice(3), [{ file, folder: '', name }]);
+    }
+    if (m === 'clear') return P.pad.clearPage(pg);
+    if (m === 'delete') {
+      if (!confirm('Delete this note? This cannot be undone.')) return;
+      const cur = P; P.dirty = false;
+      store.remove(cur.id); store.deleteInk(cur.id, cur.parts || (byId[cur.id] || {}).inkParts || 0);
+      await closePad();
+      toast('Note deleted');
+    }
+  });
+}
+function dataUrlBlob(url) {
+  const [head, b64] = url.split(',');
+  const bin = atob(b64), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: (/data:([^;]+)/.exec(head) || [])[1] || 'image/png' });
+}
+// Handwriting → text, using a Google Gemini channel (it can read images).
+async function readHandwriting(dataUrl, what) {
+  if (!aiCfg && store.mode === 'cloud') await loadAi();
+  const chans = ((aiCfg && aiCfg.channels) || []).filter(c => c.provider === 'gemini' && c.enabled !== false && c.key && c.model);
+  if (!chans.length) throw new Error('Add a Google Gemini channel (Settings → AI channels) to read handwriting.');
+  const r = await askChain(chans, [{ role: 'user', content: [
+    { type: 'text', text: `Transcribe the handwritten ${what || 'text'} in this image exactly as written. Keep line breaks, lists and numbering. Write formulas and units in plain text. Do not correct, add, summarise or explain anything. If a word cannot be read, write [?]. Reply with the transcription only.` },
+    { type: 'image', mime: 'image/png', data: dataUrl.split(',')[1] },
+  ] }]);
+  return r.text.replace(/^```[a-z]*\n?|```$/g, '').trim();
+}
+async function readHandwritingPage(pg) {
+  if (!pageHasInk(P.ink, pg)) return toast('There is no writing on this page yet.', true);
+  if (!confirm('Send a picture of this page to Google Gemini to read your handwriting?\n\nOn the free plan Google may use what you send to improve its products.')) return;
+  padStatus('Reading handwriting…');
+  try {
+    const text = await readHandwriting(pageImage(P.ink, pg, 1400), 'notes');
+    if (!P) return;
+    const ta = app.querySelector('#pad .pad-ta');
+    ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/, '\n\n') : '') + text;
+    padDirty();
+    setPadTab('text');
+    toast('Handwriting added to the typed text — check it for mistakes');
+  } catch (e) { padStatus('Saved'); toast((e.notes && e.notes[0]) || e.message, true); }
+}
+function setPadTab(tab) {
+  if (!P) return;
+  P.tab = ui.padTab = tab;
+  const el = app.querySelector('#pad');
+  el.querySelectorAll('.pad-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  el.querySelector('.pad-toolwrap').hidden = tab !== 'ink';
+  el.querySelector('.pad-scroll').hidden = tab !== 'ink';
+  el.querySelector('.pad-text').hidden = tab !== 'text';
+  if (tab === 'ink') P.pad.layout();
+  else el.querySelector('.pad-ta').focus();
+}
+
+/* ---- write a question by hand in Ask AI ---- */
+function writeQuestion(scope) {
+  const ink = { v: 1, pages: 1, paper: 'lined', ph: 520, strokes: [] };
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>Write your question</h2>
+      <button type="button" class="iconbtn" data-undo aria-label="Undo">${icon('undo')}</button>
+      <button type="button" class="btn" data-clear>Clear</button>
+      <button type="button" class="btn primary" data-go>${icon('spark')} Use as text</button></div>
+    <div class="ovl-body qpad"><div class="pad-pages small-pad"></div>
+      <p class="small muted">Write with your stylus. “Use as text” reads it with your Google Gemini channel and puts it in the question box, so you can check it before sending.</p></div>`);
+  const pad = new Pad(el.querySelector('.pad-pages'), ink, { onChange: () => { el._dirty = ink.strokes.length > 0; }, onPen: markPen });
+  pad.penOnly = penSeen;
+  el.querySelector('[data-undo]').onclick = () => pad.undo();
+  el.querySelector('[data-clear]').onclick = () => pad.clearPage(0);
+  el.querySelector('[data-go]').onclick = async () => {
+    if (!ink.strokes.length) return toast('Write something first.', true);
+    const btn = el.querySelector('[data-go]'); btn.disabled = true; btn.textContent = 'Reading…';
+    try {
+      const text = await readHandwriting(pageCanvas(ink, 0, 1200, 520).toDataURL('image/png'), 'question');
+      el._dirty = false; pad.destroy(); el._close();
+      const A = chatOf(scope); A.draft = (A.draft ? A.draft.trim() + ' ' : '') + text;
+      refreshChat(scope);
+      const q = app.querySelector(`.aipanel[data-scope="${CSS.escape(scope)}"] .aiq`); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+    } catch (e) { btn.disabled = false; btn.innerHTML = `${icon('spark')} Use as text`; toast((e.notes && e.notes[0]) || e.message, true); }
+  };
 }
 
 /* ---------------- search ---------------- */
@@ -1960,6 +2230,17 @@ app.addEventListener('click', async e => {
     case 'ai-kind': { const { chosen } = aiKinds(); ui.ai.kinds = chosen.includes(t.dataset.k) ? chosen.filter(k => k !== t.dataset.k) : [...chosen, t.dataset.k]; refreshChat('global'); break; }
     case 'ai-unfocus': ui.ai.focus = null; refreshChat('global'); break;
     case 'ai-open': openDrawer(); break;
+    case 'ai-write': writeQuestion((t.closest('[data-scope]') || {}).dataset?.scope || 'global'); break;
+    case 'note-new': newPadNote(r.where); break;
+    case 'pad-close': closePad(); break;
+    case 'pad-tool': if (P && P.pad) { P.pad.tool = t.dataset.tool; app.querySelectorAll('#pad .ptool[data-tool]').forEach(b => b.classList.toggle('on', b === t)); } break;
+    case 'pad-color': if (P && P.pad) { P.pad.color = t.dataset.color; if (P.pad.tool === 'eraser') { P.pad.tool = 'pen'; app.querySelectorAll('#pad .ptool[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === 'pen')); } app.querySelectorAll('#pad .pcolor').forEach(b => b.classList.toggle('on', b === t)); } break;
+    case 'pad-undo': if (P && P.pad) P.pad.undo(); break;
+    case 'pad-redo': if (P && P.pad) P.pad.redo(); break;
+    case 'pad-addpage': if (P && P.pad) P.pad.addPage(); break;
+    case 'pad-tab': setPadTab(t.dataset.tab); break;
+    case 'pad-menu': if (P && P.pad) padMenu(); break;
+    case 'pad-penonly': if (P && P.pad) { P.pad.penOnly = t.checked; if (t.checked) markPen(); else { penSeen = false; try { localStorage.removeItem('rl.penSeen'); } catch (err) {} document.body.classList.remove('has-pen'); } } break;
     case 'ai-close': closeDrawer(); break;
     case 'ai-full': { const sc = ui.drawer; closeDrawer(); if (sc && sc.startsWith('ws:')) ui.ai.focus = sc.slice(3); break; }
     case 'ai-private': case 'ai-unfile': case 'ai-stop': case 'ai-clear': case 'ai-copy': case 'ai-hint': {
@@ -1988,6 +2269,7 @@ app.addEventListener('click', async e => {
       if (!confirm(`Delete this ${KINDS[editor.kind].label.toLowerCase()}${own.length ? ` and its ${own.length} file${own.length > 1 ? 's' : ''}` : ''}? This cannot be undone.`)) return;
       (editor.item.photos || []).forEach(id => store.removePhoto(id));
       own.forEach(f => store.deleteFile(f));
+      if (WS[editor.kind]) notesOf('ws:' + editor.item.id).forEach(n => { store.remove(n.id); store.deleteInk(n.id, n.inkParts || 0); });
       store.remove(editor.item.id);
       if (WS[editor.kind] && r.ws) { const back = WS[editor.kind].list; editor = null; closeEditor(true); go(back); }
       else closeEditor();
@@ -2121,6 +2403,10 @@ app.addEventListener('change', async e => {
   } else if (t.dataset.act === 'import') {
     const f = t.files[0]; t.value = '';
     if (f) importData(f);
+  } else if (t.dataset.act === 'pad-width' && P && P.pad) {
+    P.pad.width = Number(t.value);
+  } else if (t.dataset.act === 'pad-paper' && P && P.pad) {
+    P.pad.setPaper(t.value);
   } else if (t.dataset.act === 'ai-file') {
     const f = t.files[0]; t.value = '';
     if (f) aiAttach((t.closest('[data-scope]') || {}).dataset?.scope || 'global', f);
@@ -2143,6 +2429,11 @@ app.addEventListener('change', async e => {
 
 app.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'notefilter') {
+    ui.filters.__notes = t.value; const pos = t.selectionStart; render();
+    const nf = app.querySelector('#notefilter'); if (nf) { nf.focus(); nf.setSelectionRange(pos, pos); }
+    return;
+  }
   if (t.classList.contains('aiq')) {
     chatOf(t.closest('[data-scope]').dataset.scope).draft = t.value;
     t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px';
@@ -2175,6 +2466,8 @@ app.addEventListener('keydown', e => {
 });
 addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
+  if (e.key === 'Escape' && P && !document.querySelector('.ovl')) { closePad(); return; }
+  if (P && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); e.shiftKey ? P.pad.redo() : P.pad.undo(); return; }
   if (e.key === 'Escape' && ui.drawer && !document.querySelector('.ovl') && !editor) { closeDrawer(); return; }
   const ov = document.querySelector('.ovl');
   if (e.key === 'Escape' && ov) { if (!ov._dirty || confirm('Discard your changes?')) ov._close(); return; }
