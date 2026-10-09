@@ -1,9 +1,17 @@
-// Paste into Firebase console → Firestore → Rules. Only the signed-in owner can read or write their data.
+// Template only. The live rules are pasted in the Firebase console, so your email is not published here.
+// Replace YOUR_EMAIL with the Google account(s) allowed to use the app.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function isOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['YOUR_EMAIL@gmail.com'];
     }
+    match /users/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+    // Everything else is denied.
   }
 }

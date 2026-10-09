@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-apk
@@ -16,16 +16,20 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only to publish the release
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           gradle-version: '8.9'
 
@@ -68,15 +72,16 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk research-log.apk
           keytool -printcert -jarfile research-log.apk | grep -i sha256 || true
           ls -la research-log.apk
+          rm -f android/release.keystore   # never leave the key on disk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: research-log-apk
           path: research-log.apk
 
       - name: Publish release
         if: steps.key.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: android-v${{ github.run_number }}
           name: Research Log for Android (build ${{ github.run_number }})

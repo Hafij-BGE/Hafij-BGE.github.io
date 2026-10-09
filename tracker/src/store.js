@@ -9,7 +9,13 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, setDoc, deleteDoc, getDoc, onSnapshot, writeBatch,
+  terminate, clearIndexedDbPersistence,
 } from 'firebase/firestore';
+
+// Remove everything this app stored in the browser (demo data, photos).
+export function wipeLocal() {
+  try { Object.keys(localStorage).filter(k => k.startsWith('rl.')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+}
 
 export const newId = () =>
   Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -52,7 +58,10 @@ export class CloudStore extends Emitter {
       this.fromCache = snap.metadata.fromCache;
       this.emit('items', items);
       this.emit('status', this.lastStatus());
-    }, e => this.emit('error', friendly(e)));
+    }, e => {
+      if (e && e.code === 'permission-denied') this.emit('denied');
+      else this.emit('error', friendly(e));
+    });
   }
   lastStatus() {
     if (!navigator.onLine) return 'offline';
@@ -69,7 +78,14 @@ export class CloudStore extends Emitter {
       } else if (e.code !== 'auth/popup-closed-by-user') throw new Error(friendly(e));
     }
   }
-  signOut() { return signOut(this.auth); }
+  // Signing out also erases this device's offline copy, so nothing is left behind on a shared computer.
+  async signOut() {
+    if (this.unsub) { this.unsub(); this.unsub = null; }
+    try { await signOut(this.auth); } catch (e) {}
+    try { await terminate(this.db); await clearIndexedDbPersistence(this.db); } catch (e) {}
+    wipeLocal();
+    location.replace(location.pathname);
+  }
   // Writes return immediately; Firestore applies them locally and syncs in the background.
   save(item) {
     const id = item.id || newId();

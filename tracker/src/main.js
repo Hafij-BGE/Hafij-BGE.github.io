@@ -1,5 +1,5 @@
 import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf } from './schema.js';
-import { CloudStore, LocalStore, newId } from './store.js';
+import { CloudStore, LocalStore, newId, wipeLocal } from './store.js';
 
 const APK_URL = 'https://github.com/Hafij-BGE/Hafij-BGE.github.io/releases/latest/download/research-log.apk';
 const cfg = window.FIREBASE_CONFIG || {};
@@ -64,6 +64,11 @@ function boot() {
   });
   store.on('status', s => { status = s; renderStatus(); });
   store.on('error', msg => toast(msg, true));
+  store.on('denied', () => {
+    alert('This Google account is not allowed to open this Research Log. You will be signed out.');
+    store.signOut();
+  });
+  if (store.mode === 'cloud') store.on('items', () => offerMigration());
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; render(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   render();
@@ -288,8 +293,8 @@ function settingsHTML() {
       <div><b>${esc(user.name || 'Local mode')}</b><span>${esc(user.email || '')}</span></div>
     </div>
     ${local ? `<p class="banner warn">Google sync isn't connected yet, so records are saved only in this browser. Once your Firebase project is connected, you'll sign in with Google here and everything syncs between phone and web.</p>`
-      : `<p class="muted">Records sync live between all devices signed in with this Google account and are stored in your own Firebase project. The app also keeps an offline copy, so you can work without a connection.</p>
-         <button class="btn" data-act="signout">Sign out</button>`}
+      : `<p class="muted">Records sync live between all devices signed in with this Google account and are stored in your own Firebase project. Only your account can read them. The app also keeps an offline copy on this device so you can work without a connection.</p>
+         <button class="btn" data-act="signout">Sign out and erase this device's copy</button>`}
   </section>
   <section class="card">
     <h3>Install</h3>
@@ -308,7 +313,7 @@ function settingsHTML() {
       <label class="btn">${icon('upload')} Import data<input type="file" accept="application/json,.json" data-act="import" hidden></label>
       <button class="btn" data-act="seed">Import CV &amp; projects</button>
     </div>
-    <p class="small muted">Exports include all records but not photos; photos stay in your synced storage.</p>
+    <p class="small muted">Exports include all records but not photos. The file contains your private notes — keep it somewhere only you can access.</p>
   </section>
   <section class="card">
     <h3>About</h3>
@@ -467,7 +472,7 @@ app.addEventListener('click', async e => {
       try { await store.signIn(); } catch (err) { toast(err.message, true); }
       break;
     case 'signout':
-      if (confirm('Sign out of Research Log on this device?')) store.signOut();
+      if (confirm('Sign out? The offline copy on this device will be erased. Your synced data stays safe in your account.')) store.signOut();
       break;
     case 'add': go(`#/${r.section.id}/${r.kind}/new`); break;
     case 'toggle': {
@@ -549,6 +554,29 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
   if (e.key === 'Escape' && editor) { if (!editor.dirty || confirm('Discard your changes?')) closeEditor(); }
 });
+
+/* ---------------- move demo data into the synced account ---------------- */
+let migrationAsked = false;
+async function offerMigration() {
+  if (migrationAsked || !user) return;
+  migrationAsked = true;
+  let local = {};
+  try { local = JSON.parse(localStorage.getItem('rl.items') || '{}'); } catch (e) {}
+  const list = Object.entries(local).map(([id, v]) => ({ id, ...v })).filter(x => KINDS[x.kind]);
+  if (!list.length) return wipeLocal();
+  if (!confirm(`Move ${list.length} records saved on this device before sign-in into your synced account?`)) return;
+  for (const it of list) {
+    const pics = [];
+    for (const pid of it.photos || []) {
+      let d = null; try { d = localStorage.getItem('rl.photo.' + pid); } catch (e) {}
+      if (d) { const np = store.savePhoto(d, it.id); if (np) pics.push(np); }
+    }
+    if (it.photos) it.photos = pics;
+  }
+  await store.bulkSave(list);
+  wipeLocal();
+  toast(`Moved ${list.length} records into your account`);
+}
 
 /* ---------------- data tools ---------------- */
 function exportData() {
