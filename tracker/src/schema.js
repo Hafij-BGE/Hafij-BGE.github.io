@@ -6,8 +6,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 export const SECTIONS = [
   { id: 'lab', label: 'Lab', kinds: ['experiment', 'protocol', 'inventory'] },
   { id: 'research', label: 'Research', kinds: ['project', 'task', 'paper'] },
+  { id: 'phd', label: 'PhD', kinds: ['application'] },
   { id: 'profile', label: 'Profile', kinds: ['publication', 'talk', 'award'] },
 ];
+
+export const APP_OPEN = ['Researching', 'Contacted supervisor', 'Preparing'];
+export const APP_STATUS = ['Researching', 'Contacted supervisor', 'Preparing', 'Submitted', 'Interview', 'Offer', 'Accepted', 'Rejected', 'Declined'];
+export const APP_DOCS = ['CV', 'Statement of purpose', 'Research proposal', 'References', 'Transcripts', 'Language test', 'Publications', 'Portfolio / writing sample'];
 
 export const KINDS = {
   experiment: {
@@ -95,6 +100,7 @@ export const KINDS = {
     sub: (x, ctx) => [x.due && dueLabel(x.due), ctx.projectName(x.project)].filter(Boolean).join(' · '),
     badge: x => (x.priority === 'High' ? 'High' : null),
     checkable: true,
+    calendar: x => x.due && !x.done && { date: x.due, title: x.title, details: x.notes || '' },
     fields: [
       { key: 'title', label: 'Task', type: 'text', required: true },
       { key: 'due', label: 'Due date', type: 'date' },
@@ -118,6 +124,34 @@ export const KINDS = {
       { key: 'status', label: 'Status', type: 'select', options: ['To read', 'Reading', 'Read'], default: () => 'To read' },
       { key: 'project', label: 'Relevant to project', type: 'ref', ref: 'project' },
       { key: 'notes', label: 'Notes & key points', type: 'textarea', rows: 6 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  application: {
+    label: 'PhD application', plural: 'Applications', color: 'var(--phd)',
+    sort: (a, b) => (closed(a) - closed(b)) || (a.deadline || '9999').localeCompare(b.deadline || '9999'),
+    sub: x => [x.university, x.country, x.deadline && 'deadline ' + x.deadline].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    warn: x => {
+      if (!x.deadline || !APP_OPEN.includes(x.status || 'Researching')) return null;
+      const days = Math.round((new Date(x.deadline) - new Date(today())) / 864e5);
+      if (days < 0) return 'Deadline passed';
+      if (days <= 14) return days === 0 ? 'Due today' : `Due in ${days} d`;
+      return null;
+    },
+    calendar: x => x.deadline && { date: x.deadline, title: 'PhD application deadline: ' + [x.title, x.university].filter(Boolean).join(' — '), details: x.portal || '' },
+    fields: [
+      { key: 'title', label: 'Position / programme', type: 'text', required: true, placeholder: 'e.g. PhD in Computational Immunology' },
+      { key: 'university', label: 'University / institute', type: 'text' },
+      { key: 'country', label: 'Country', type: 'text' },
+      { key: 'status', label: 'Status', type: 'select', options: APP_STATUS, default: () => 'Researching' },
+      { key: 'deadline', label: 'Application deadline', type: 'date' },
+      { key: 'supervisor', label: 'Supervisor / PI', type: 'text' },
+      { key: 'supervisorEmail', label: 'Supervisor email', type: 'text' },
+      { key: 'funding', label: 'Funding / scholarship', type: 'text', placeholder: 'e.g. fully funded, DAAD, Marie Curie' },
+      { key: 'portal', label: 'Application portal / ad link', type: 'url' },
+      { key: 'documents', label: 'Documents ready', type: 'checklist', options: APP_DOCS },
+      { key: 'notes', label: 'Notes (requirements, contacts, interview prep)', type: 'textarea', rows: 5 },
       { key: 'tags', label: 'Tags', type: 'tags' },
     ],
   },
@@ -165,6 +199,7 @@ export const KINDS = {
   },
 };
 
+function closed(x) { return ['Accepted', 'Rejected', 'Declined'].includes(x.status) ? 1 : 0; }
 function statusRank(s) { return { Active: 0, Idea: 1, 'On hold': 2, Done: 3 }[s] ?? 4; }
 function prioRank(p) { return { High: 0, Medium: 1, Low: 2 }[p] ?? 3; }
 function readRank(s) { return { Reading: 0, 'To read': 1, Read: 2 }[s] ?? 3; }

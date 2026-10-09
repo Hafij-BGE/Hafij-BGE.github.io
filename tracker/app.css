@@ -240,3 +240,13 @@ code { font: .9em ui-monospace, Menlo, Consolas, monospace; }
 .qrbox { margin: 14px 0 6px; padding: 16px; background: #fff; color: #18212B; border-radius: 14px; text-align: center; max-width: 320px; }
 .qrbox svg { width: 100%; max-width: 260px; height: auto; display: block; margin: 0 auto 8px; }
 .qrbox p { margin: 0; }
+:root { --phd: #B45309; }
+@media (prefers-color-scheme: dark) { :root { --phd: #E0A43C; } }
+@media (min-width: 620px) { .quick { grid-template-columns: repeat(3, 1fr); } }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 14px; }
+.checkopt { display: flex; align-items: center; gap: 8px; font-size: .95rem; padding: 6px 0; cursor: pointer; }
+.checkopt input { width: 18px; height: 18px; accent-color: var(--wet); }
+.steps-plain { margin: 6px 0 10px; padding-left: 1.2em; color: var(--muted); font-size: .92rem; }
+.steps-plain li { margin-bottom: 4px; }
+.grid2 > * { min-width: 0; }
+.card { min-width: 0; }

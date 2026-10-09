@@ -1,4 +1,4 @@
-import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf } from './schema.js';
+import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
 import qrcode from 'qrcode-generator';
 
@@ -41,6 +41,9 @@ const I = {
   lab: '<path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7 15h10"/>',
   research: '<path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/>',
   profile: '<circle cx="12" cy="8" r="5"/><path d="M8.5 12.5 7 21l5-3 5 3-1.5-8.5"/>',
+  phd: '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5M22 9v6"/>',
+  cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -122,6 +125,7 @@ function render() {
   else html = homeHTML();
   view.innerHTML = html;
   view.scrollTop = 0;
+  if (ui.scrollTo) { const el = view.querySelector('#' + ui.scrollTo); ui.scrollTo = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30); }
   if (r.view === 'search') { const q = view.querySelector('#q'); q && q.focus(); }
   const fab = app.querySelector('#fab');
   fab.hidden = !r.section;
@@ -149,7 +153,7 @@ function renderStatus() {
 }
 
 function shellHTML() {
-  const nav = [['home', 'Home', '#/home'], ['lab', 'Lab', '#/lab'], ['research', 'Research', '#/research'], ['profile', 'Profile', '#/profile'], ['settings', 'Settings', '#/settings']];
+  const nav = [['home', 'Home', '#/home'], ['lab', 'Lab', '#/lab'], ['research', 'Research', '#/research'], ['phd', 'PhD', '#/phd'], ['profile', 'Profile', '#/profile'], ['settings', 'Settings', '#/settings']];
   return `<div class="shell">
     <nav class="nav" aria-label="Sections">
       <div class="nav-brand"><div class="logo-tiles"><i></i><i></i><i></i><i></i></div><b>Research Log</b></div>
@@ -193,6 +197,7 @@ function homeHTML() {
   const recent = of('experiment').sort(KINDS.experiment.sort).slice(0, 4);
   const active = of('project').filter(p => p.status === 'Active').sort(KINDS.project.sort);
   const local = store.mode === 'local';
+  const apps = of('application').filter(a => APP_OPEN.includes(a.status || 'Researching') || ['Submitted', 'Interview', 'Offer'].includes(a.status)).sort(KINDS.application.sort).slice(0, 5);
 
   return `
   ${local ? `<div class="banner warn"><b>Not syncing yet.</b> Data stays in this browser until you connect Google sync. <a href="#/settings">Connect</a></div>` : ''}
@@ -201,14 +206,20 @@ function homeHTML() {
     <p>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
   </section>
   <div class="quick">
-    ${[['lab', 'experiment', 'Experiment'], ['research', 'task', 'Task'], ['lab', 'inventory', 'Sample'], ['research', 'paper', 'Paper']]
+    ${[['lab', 'experiment', 'Experiment'], ['research', 'task', 'Task'], ['phd', 'application', 'Application'], ['lab', 'inventory', 'Sample'], ['research', 'paper', 'Paper']]
       .map(([s, k, l]) => `<a class="qbtn" href="#/${s}/${k}/new" style="--c:${KINDS[k].color}">${icon('plus')}${l}</a>`).join('')}
+    <a class="qbtn" href="#/settings" data-scroll="claude" style="--c:var(--accent)">${icon('spark')}With Claude</a>
   </div>
   ${items.length === 0 ? `<section class="card welcome">
      <h3>Start with what you already have</h3>
      <p>Import your publications, talks, awards and current projects from your CV in one tap. You can edit or delete them later.</p>
      <button class="btn primary" data-act="seed">Import CV &amp; projects</button></section>` : ''}
   <div class="grid2">
+    <section class="card">
+      <h3>PhD applications</h3>
+      ${apps.length ? `<ul class="rows">${apps.map(rowHTML).join('')}</ul>` : `<p class="muted">No open applications yet.</p>`}
+      <a class="more" href="#/phd">PhD Control Center</a>
+    </section>
     <section class="card">
       <h3>Due this week</h3>
       ${soon.length ? `<ul class="rows">${soon.map(rowHTML).join('')}</ul>` : `<p class="muted">Nothing due in the next 7 days.</p>`}
@@ -264,7 +275,10 @@ function sectionOf(kind) { return SECTIONS.find(s => s.kinds.includes(kind)).id;
 
 function badgeClass(v) {
   if (['Completed', 'Done', 'Published', 'Read', 'In stock', 'Accepted'].includes(v)) return 'g';
-  if (['In progress', 'Active', 'Reading', 'Under review', 'Submitted', 'Revision'].includes(v)) return 'b';
+  if (['Offer'].includes(v)) return 'g';
+  if (['In progress', 'Active', 'Reading', 'Under review', 'Submitted', 'Revision', 'Interview'].includes(v)) return 'b';
+  if (['Rejected', 'Declined'].includes(v)) return 'r';
+  if (['Preparing', 'Contacted supervisor'].includes(v)) return 'a';
   if (['Failed', 'Expired', 'Used up', 'High'].includes(v)) return 'r';
   if (['Low', 'On hold', 'Repeated'].includes(v)) return 'a';
   return 'n';
@@ -355,6 +369,18 @@ function settingsHTML() {
     </div>
     <p class="small muted">On Android, open this page in Chrome and choose <b>⋮ → Add to Home screen</b>, or install your private Android app.</p>
   </section>
+  <section class="card" id="claude">
+    <h3>Add data with Claude</h3>
+    <p class="muted">Works from any Claude chat or account, and you approve every change.</p>
+    <ol class="steps-plain">
+      <li>Tap <b>Copy instructions</b>, paste them into a Claude chat, and add your information underneath (a list, notes, an email, a photo of a page).</li>
+      <li>Copy Claude's reply and paste it below.</li>
+      <li>Tap <b>Add to my log</b>. You see what will be added or changed before anything is saved.</li>
+    </ol>
+    <div class="btnrow"><button class="btn" data-act="copyprompt">${icon('copy')} Copy instructions</button></div>
+    <textarea id="pasteData" class="setup" rows="5" spellcheck="false" placeholder='Paste Claude&#39;s reply here — it starts with {"items": …'></textarea>
+    <div class="btnrow"><button class="btn primary" data-act="pasteimport">${icon('spark')} Add to my log</button></div>
+  </section>
   <section class="card">
     <h3>Backup</h3>
     <p class="muted">An extra copy you control: export everything as a file you can keep in Google Drive.</p>
@@ -421,6 +447,7 @@ function fieldHTML(f, item) {
     case 'number': return `<div class="fld half">${lab}<input id="${id}" name="${f.key}" type="number" inputmode="numeric" value="${esc(v ?? '')}"></div>`;
     case 'range': return `<div class="fld">${lab}<div class="rangewrap"><input id="${id}" name="${f.key}" type="range" min="0" max="100" step="5" value="${Number(v) || 0}"><output>${Number(v) || 0}%</output></div></div>`;
     case 'check': return `<div class="fld half"><label class="toggle big"><input name="${f.key}" type="checkbox" ${v ? 'checked' : ''}> ${esc(f.label)}</label></div>`;
+    case 'checklist': return `<div class="fld">${lab}<div class="checks">${f.options.map((o, i) => `<label class="checkopt"><input type="checkbox" name="${f.key}" value="${esc(o)}" ${(v || []).includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('')}</div></div>`;
     case 'tags': return `<div class="fld">${lab}<input id="${id}" name="${f.key}" type="text" value="${esc((v || []).join(', '))}" placeholder="comma, separated, tags"></div>`;
     case 'url': return `<div class="fld">${lab}<input id="${id}" name="${f.key}" type="text" inputmode="url" value="${esc(v || '')}" placeholder="${esc(f.placeholder || 'https://…')}"></div>`;
     case 'photos': return `<div class="fld">${lab}<div class="photos" id="photos"></div>
@@ -443,6 +470,7 @@ function editorHTML() {
       <div class="fields">${K.fields.map(f => fieldHTML(f, item)).join('')}</div>
       ${isNew ? '' : `<div class="sheet-foot">
         ${['experiment', 'protocol'].includes(kind) ? `<button type="button" class="btn" data-act="duplicate">${icon('copy')} Duplicate</button>` : ''}
+        ${K.calendar && K.calendar(item) ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(K.calendar(item)))}">${icon('cal')} Add to Google Calendar</a>` : ''}
         <button type="button" class="btn danger" data-act="delete">${icon('trash')} Delete</button>
         <span class="small muted">Last saved ${item.updatedAt ? new Date(item.updatedAt).toLocaleString() : ''}</span>
       </div>`}
@@ -472,6 +500,7 @@ function readForm() {
     if (f.type === 'photos') return;
     const el = form.elements[f.key];
     if (!el) return;
+    if (f.type === 'checklist') { out[f.key] = [...app.querySelectorAll(`#edform input[name="${f.key}"]:checked`)].map(c => c.value); return; }
     if (f.type === 'check') out[f.key] = el.checked;
     else if (f.type === 'tags') out[f.key] = el.value.split(',').map(s => s.trim()).filter(Boolean);
     else if (f.type === 'number' || f.type === 'range') out[f.key] = el.value === '' ? null : Number(el.value);
@@ -571,6 +600,19 @@ app.addEventListener('click', async e => {
       if (deferredInstall) { deferredInstall.prompt(); deferredInstall = null; }
       break;
     case 'export': exportData(); break;
+    case 'copyprompt':
+      try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('Instructions copied — paste them into a Claude chat'); }
+      catch (e) { toast('Copying was blocked by the browser.', true); }
+      break;
+    case 'pasteimport': {
+      const txt = app.querySelector('#pasteData').value;
+      const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+      let json = null;
+      try { json = JSON.parse(txt.slice(a, b + 1)); } catch (e) {}
+      if (!json) return toast("That doesn't look like Claude's data reply. Copy the whole code block.", true);
+      if (await runImport(json)) app.querySelector('#pasteData').value = '';
+      break;
+    }
     case 'showqr': {
       const box = app.querySelector('#qrbox');
       if (!box.hidden) { box.hidden = true; box.innerHTML = ''; t.textContent = 'Show setup code'; break; }
@@ -596,6 +638,8 @@ app.addEventListener('click', async e => {
     case 'seed': seedCV(); break;
   }
 });
+
+app.addEventListener('click', e => { const a = e.target.closest('a[data-scroll]'); if (a) ui.scrollTo = a.dataset.scroll; }, true);
 
 app.addEventListener('change', async e => {
   const t = e.target;
@@ -673,46 +717,90 @@ function exportData() {
   toast(`Exported ${items.length} records`);
 }
 
-async function importData(file) {
-  try {
-    const json = JSON.parse(await file.text());
-    const list = (json.items || json).filter(x => x && KINDS[x.kind] && x.title);
-    if (!list.length) return toast('No records found in that file.', true);
-    // Merge, never overwrite: a record that already exists (same ID, or same type and title)
-    // only gets its empty fields filled in; everything else is added as new.
-    const norm = t => String(t || '').trim().toLowerCase();
-    const byKey = new Map(items.map(x => [x.kind + '|' + norm(x.title), x]));
-    const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
-    const idMap = {}, out = [];
-    let added = 0, completed = 0;
-    for (const raw of list) {
-      const { photos, ...x } = raw;
-      const existing = (x.id && byId[x.id]) || byKey.get(x.kind + '|' + norm(x.title));
-      if (existing) {
-        idMap[x.id] = existing.id;
-        const merged = { ...existing };
-        let changed = false;
-        for (const [k, v] of Object.entries(x)) {
-          if (k === 'id' || isEmpty(v)) continue;
-          if (isEmpty(merged[k])) { merged[k] = v; changed = true; }
-        }
-        if (changed) { out.push(merged); completed++; }
-      } else {
-        const id = x.id || newId();
-        idMap[x.id] = id;
-        const rec = { ...x, id, createdAt: x.createdAt || Date.now() };
-        if (KINDS[x.kind].fields.some(f => f.type === 'photos')) rec.photos = [];
-        out.push(rec); added++;
+// Merge records into the log. Existing records (same ID, or same type and title) only get empty
+// fields filled in; a record marked _update overwrites the fields it carries; _delete removes it.
+// Nothing is saved until you confirm.
+function mergePlan(list) {
+  const norm = t => String(t || '').trim().toLowerCase();
+  const byKey = new Map(items.map(x => [x.kind + '|' + norm(x.title), x]));
+  const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+  const idMap = {}, out = [], del = [];
+  let added = 0, completed = 0, updated = 0;
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (!raw || !KINDS[raw.kind] || !raw.title) continue;
+    const { photos, _update, _delete, ...x } = raw;
+    const allowed = new Set(['id', 'kind', 'title', 'createdAt', ...KINDS[x.kind].fields.map(f => f.key)]);
+    Object.keys(x).forEach(k => { if (!allowed.has(k)) delete x[k]; });
+    const existing = (x.id && byId[x.id]) || byKey.get(x.kind + '|' + norm(x.title));
+    if (_delete) { if (existing) del.push(existing); continue; }
+    if (existing) {
+      idMap[x.id] = existing.id;
+      const merged = { ...existing };
+      let changed = false;
+      for (const [k, v] of Object.entries(x)) {
+        if (k === 'id' || isEmpty(v)) continue;
+        if (_update ? JSON.stringify(merged[k]) !== JSON.stringify(v) : isEmpty(merged[k])) { merged[k] = v; changed = true; }
       }
+      if (changed) { out.push(merged); _update ? updated++ : completed++; }
+    } else {
+      const id = x.id || newId();
+      idMap[x.id] = id;
+      const rec = { ...x, id, createdAt: x.createdAt || Date.now() };
+      KINDS[x.kind].fields.forEach(f => { if (rec[f.key] === undefined && f.default) rec[f.key] = f.default(); });
+      if (KINDS[x.kind].fields.some(f => f.type === 'photos')) rec.photos = [];
+      out.push(rec); added++;
     }
-    for (const it of out) for (const f of KINDS[it.kind].fields)
-      if (f.type === 'ref' && it[f.key] && idMap[it[f.key]]) it[f.key] = idMap[it[f.key]];
-    if (!out.length) return toast('Everything in that file is already in your log.');
-    if (!confirm(`Import ${added} new record${added === 1 ? '' : 's'} and complete ${completed} existing one${completed === 1 ? '' : 's'}? Nothing you have written will be overwritten.`)) return;
-    await store.bulkSave(out);
-    toast(`Imported: ${added} new, ${completed} completed`);
-  } catch (err) { toast('That file could not be read as a Research Log export.', true); }
+  }
+  for (const it of out) for (const f of KINDS[it.kind].fields)
+    if (f.type === 'ref' && it[f.key] && idMap[it[f.key]]) it[f.key] = idMap[it[f.key]];
+  return { out, del, added, completed, updated };
 }
+
+async function runImport(json) {
+  const plan = mergePlan(json.items || json);
+  if (!plan.out.length && !plan.del.length) { toast('Nothing new — everything is already in your log.'); return false; }
+  const kinds = {};
+  plan.out.forEach(x => { kinds[KINDS[x.kind].plural] = (kinds[KINDS[x.kind].plural] || 0) + 1; });
+  const what = Object.entries(kinds).map(([k, n]) => `${n} ${k.toLowerCase()}`).join(', ');
+  const msg = `Add ${plan.added} new record${plan.added === 1 ? '' : 's'}, fill in ${plan.completed}, update ${plan.updated}` +
+    (plan.del.length ? `, DELETE ${plan.del.length}` : '') + `?\n\n${what}`;
+  if (!confirm(msg)) return false;
+  if (plan.out.length) await store.bulkSave(plan.out);
+  for (const d of plan.del) { (d.photos || []).forEach(id => store.removePhoto(id)); store.remove(d.id); }
+  toast(`Done: ${plan.added} added, ${plan.completed + plan.updated} updated${plan.del.length ? `, ${plan.del.length} removed` : ''}`);
+  return true;
+}
+
+async function importData(file) {
+  try { await runImport(JSON.parse(await file.text())); }
+  catch (err) { toast('That file could not be read as a Research Log export.', true); }
+}
+
+function calLink({ date, title, details }) {
+  const d1 = date.replace(/-/g, '');
+  const n = new Date(date + 'T00:00:00Z'); n.setUTCDate(n.getUTCDate() + 1);
+  const d2 = n.toISOString().slice(0, 10).replace(/-/g, '');
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d1}/${d2}&details=${encodeURIComponent(details || '')}`;
+}
+
+const CLAUDE_PROMPT = `Please turn my information below into data for my Research Log app.
+Reply with ONE JSON code block only, shaped like {"items": [ ... ]}. Use only facts I give you — leave out anything unknown; never invent dates, names or numbers.
+Each item needs "kind" and "title", plus any of these fields (dates as YYYY-MM-DD):
+- application: university, country, status (Researching | Contacted supervisor | Preparing | Submitted | Interview | Offer | Accepted | Rejected | Declined), deadline, supervisor, supervisorEmail, funding, portal, documents (list from: CV, Statement of purpose, Research proposal, References, Transcripts, Language test, Publications, Portfolio / writing sample — only the ones already ready), notes
+- task: due, priority (Low | Medium | High), notes, done (true/false)
+- project: status (Idea | Active | On hold | Done), area (Wet lab | Computational | Both), progress (0-100), start, target, description
+- experiment: date, status (Planned | In progress | Completed | Failed | Repeated), objective, materials, procedure, results, conclusion
+- protocol: category, version, purpose, materials, steps, notes
+- inventory: type, quantity, location, lot, received, expiry, status (In stock | Low | Used up | Expired), notes
+- paper: authors, year, journal, doi, status (To read | Reading | Read), notes
+- publication: authors, venue, year, type, status (Idea | Drafting | Submitted | Under review | Revision | Accepted | Published), doi
+- talk: type (Oral | Poster | Invited talk | Seminar | Workshop), event, location, date, coauthors
+- award: issuer, year
+All of the above may also have "tags": ["..."].
+To change something already in my log, repeat its exact kind and title and add "_update": true with only the fields that change.
+
+My information:
+`;
 
 async function seedCV() {
   const have = new Set(items.map(x => x.kind + '|' + (x.title || '').toLowerCase()));
