@@ -202,7 +202,10 @@ function render() {
   view.scrollTop = 0;
   if (ui.scrollTo) { const el = view.querySelector('#' + ui.scrollTo); ui.scrollTo = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30); }
   if (r.view === 'search') { const q = view.querySelector('#q'); q && q.focus(); }
-  if (r.view === 'ai') { const q = view.querySelector('#aiq'); if (q && !('ontouchstart' in window)) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  if (r.view === 'ai') { const q = view.querySelector('.aiq'); if (q && !('ontouchstart' in window)) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  // The side panel follows the page: a different section or folder closes it.
+  if (ui.drawer && (ui.drawer !== currentScope(r) || r.view === 'ai')) closeDrawer();
+  renderAiFab();
   const fab = app.querySelector('#fab');
   fab.hidden = !r.section || !!r.ws;
   if (r.section) fab.setAttribute('aria-label', 'Add ' + KINDS[r.kind].label.toLowerCase());
@@ -247,6 +250,8 @@ function shellHTML() {
     <button id="fab" class="fab" data-act="add" hidden>${icon('plus')}</button>
     <div id="sheet" class="sheet" hidden></div>
     <div id="upbar" class="upbar" hidden></div>
+    <button type="button" id="aifab" class="aifab" data-act="ai-open" hidden></button>
+    <aside id="aidrawer" class="aidrawer" hidden aria-label="Ask AI"></aside>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </div>`;
 }
@@ -478,6 +483,7 @@ function fileRowsHTML(list) {
       <span class="s">${fmtSize(f.size)} · ${new Date(f.updatedAt || f.createdAt || Date.now()).toLocaleDateString()}</span>
     </button>
     <span class="tail">
+      ${/^(csv|tsv|txt|md)$/.test(extOf(f.name)) ? `<button type="button" class="iconbtn sm aianalyse" data-act="aianalyse" data-id="${f.id}" aria-label="Analyse ${esc(f.name)} with AI" title="Analyse with AI">${icon('spark')}</button>` : ''}
       <button type="button" class="iconbtn sm" data-act="dlfile" data-id="${f.id}" aria-label="Download ${esc(f.name)}">${icon('download')}</button>
       <button type="button" class="iconbtn sm" data-act="fileinfo" data-id="${f.id}" aria-label="Rename, move or delete ${esc(f.name)}">${icon('more')}</button>
     </span></li>`).join('')}</ul>`;
@@ -508,7 +514,7 @@ function wsHeadHTML(r, a, own) {
     <div class="btnrow">
       <a class="btn primary" href="${r.base}/~e/${a.kind}/${a.id}">${icon('edit')} Details</a>
       ${btns}${zipBtn}
-      <a class="btn" href="#/ai" data-aifocus="${a.id}">${icon('spark')} Ask AI</a>
+      <button type="button" class="btn" data-act="ai-open">${icon('spark')} Ask AI</button>
     </div>
   </section>`;
   if (a.kind === 'article') {
@@ -1426,38 +1432,100 @@ function aiKinds() {
   const all = SECTIONS.flatMap(s => s.kinds).filter(k => items.some(x => x.kind === k));
   return { all, chosen: (ui.ai.kinds || AI_KINDS_DEFAULT).filter(k => all.includes(k)) };
 }
+// Every page has its own conversation: the whole log ("global"), a section ("sec:lab"), or one folder ("ws:<id>").
+ui.chats = { global: ui.ai };
+const chatOf = scope => (ui.chats[scope] ||= { msgs: [], priv: true, file: null, busy: false, draft: '' });
+function currentScope(r = route()) {
+  if (r.ws) return byId[r.ws] ? 'ws:' + r.ws : null;
+  if (r.section) return 'sec:' + r.section.id;
+  if (r.view === 'home') return 'global';
+  return null;
+}
+// What a conversation can see.
+function scopeInfo(scope) {
+  if (scope.startsWith('ws:')) {
+    const id = scope.slice(3), a = byId[id];
+    if (!a) return null;
+    const linked = new Set([id]);
+    KINDS[a.kind].fields.forEach(f => { if (f.type === 'ref' && a[f.key]) linked.add(a[f.key]); });
+    const pool = items.filter(x => linked.has(x.id) || KINDS[x.kind].fields.some(f => f.type === 'ref' && x[f.key] === id));
+    const own = filesOf(id);
+    return {
+      title: a.title, pool, kinds: [...new Set(pool.map(x => x.kind))],
+      sees: `this ${KINDS[a.kind].label.toLowerCase()}${pool.length > 1 ? ` and ${pool.length - 1} linked record${pool.length > 2 ? 's' : ''}` : ''}${a.kind === 'article' ? ', its links and references' : ''}, and the names of its ${plural(own.length, 'file')}`,
+      extra: own.length ? `FILES in this folder (names only, contents not shared):\n${own.map(f => `- ${[f.folder, f.name].filter(Boolean).join('/')} (${fmtSize(f.size)})`).join('\n')}` : '',
+      hints: a.kind === 'article'
+        ? ['What is left to do before I can submit?', 'Write a data availability statement from my links.', 'Which references look incomplete?']
+        : ['What is still missing for this application?', 'Draft a short email to the supervisor.', 'Make a checklist from the README.'],
+    };
+  }
+  if (scope.startsWith('sec:')) {
+    const sec = SECTIONS.find(s => s.id === scope.slice(4));
+    if (!sec) return null;
+    const pool = items.filter(x => sec.kinds.includes(x.kind));
+    return {
+      title: sec.label, pool, kinds: sec.kinds,
+      sees: `your ${sec.kinds.map(k => KINDS[k].plural.toLowerCase()).join(', ')} (${pool.length} records)`,
+      hints: {
+        lab: ['Summarise my experiments this month.', 'Which samples or reagents expire soon?', 'Which protocols did I use most?'],
+        research: ['Which projects are behind their target date?', 'What should I work on this week?', 'Summarise my reading list by topic.'],
+        phd: ['Which deadlines are in the next 30 days?', 'Which professors have not replied yet?', 'Rank my applications by how ready they are.'],
+        profile: ['Write a short bio from my publications and awards.', 'List my talks for a CV, newest first.', 'What is missing from my academic profile?'],
+      }[sec.id] || [],
+    };
+  }
+  const { chosen } = aiKinds();
+  const f = ui.ai.focus && byId[ui.ai.focus];
+  const pool = f ? items.filter(x => x.id === f.id || KINDS[x.kind].fields.some(fl => fl.type === 'ref' && x[fl.key] === f.id)) : items;
+  return {
+    title: 'whole log', pool, kinds: f ? [...new Set(pool.map(x => x.kind))] : chosen, global: true,
+    hints: ['Which deadlines and follow-ups are in the next 30 days?', 'Summarise where each of my articles stands and what is left to do.', 'Which professors have not replied, and what should I write next?', 'Attach a CSV and ask: “What stands out in this data?”'],
+  };
+}
+
 function aiHTML() {
-  const A = ui.ai;
   if (store.mode !== 'cloud') return `<div class="empty"><p>Sign in with Google to use Ask AI.</p></div>`;
   if (!aiCfg) return `<p class="muted pad">Loading…</p>`;
-  const chans = aiCfg.channels.filter(c => c.enabled !== false && c.key && c.model);
-  if (!chans.length) return `<section class="card aiempty">${icon('spark')}<h3>Ask AI about your research</h3>
+  return chatPanelHTML('global', true);
+}
+function aiSetupHTML() {
+  return `<section class="card aiempty">${icon('spark')}<h3>Ask AI about your research</h3>
     <p class="muted">Ask questions about your projects, articles, applications and lab records, or attach a data file (CSV) to analyse. First add at least one free AI channel — when one reaches its limit, the next takes over automatically.</p>
     <div class="btnrow"><button type="button" class="btn primary" data-act="ai-add">${icon('plus')} Add an AI channel</button></div></section>`;
-  const { all, chosen } = aiKinds();
-  const focus = A.focus && byId[A.focus];
-  return `<section class="card aictx">
-    ${focus ? `<p class="aifocus">Looking at <b>${esc(focus.title)}</b> and what is linked to it <button type="button" class="btn sm" data-act="ai-unfocus">Use whole log</button></p>`
-      : `<div class="aikinds" role="group" aria-label="What the AI can see">${all.map(k => `<button type="button" class="chip ${chosen.includes(k) ? 'on' : ''}" data-act="ai-kind" data-k="${k}" aria-pressed="${chosen.includes(k)}">${esc(KINDS[k].plural)}</button>`).join('')}</div>`}
-    <label class="toggle"><input type="checkbox" data-act="ai-private" ${A.priv ? 'checked' : ''}> ${icon('lock')} Private — leave out notes, emails, private records and raw data rows</label>
+}
+function chatPanelHTML(scope, page) {
+  if (!aiCfg) return `<p class="muted pad">Loading…</p>`;
+  if (!aiCfg.channels.some(c => c.enabled !== false && c.key && c.model)) return aiSetupHTML();
+  const A = chatOf(scope), info = scopeInfo(scope);
+  if (!info) return `<p class="muted pad">Nothing to look at here.</p>`;
+  let ctxTop = '';
+  if (info.global) {
+    const { all, chosen } = aiKinds(), focus = ui.ai.focus && byId[ui.ai.focus];
+    ctxTop = focus ? `<p class="aifocus">Looking at <b>${esc(focus.title)}</b> and what is linked to it <button type="button" class="btn sm" data-act="ai-unfocus">Use whole log</button></p>`
+      : `<div class="aikinds" role="group" aria-label="What the AI can see">${all.map(k => `<button type="button" class="chip ${chosen.includes(k) ? 'on' : ''}" data-act="ai-kind" data-k="${k}" aria-pressed="${chosen.includes(k)}">${esc(KINDS[k].plural)}</button>`).join('')}</div>`;
+  } else ctxTop = `<p class="aisees small">Sees ${esc(info.sees)}.</p>`;
+  return `<div class="aipanel ${page ? 'page' : 'docked'}" data-scope="${esc(scope)}">
+  <section class="card aictx">
+    ${ctxTop}
+    <label class="toggle"><input type="checkbox" data-act="ai-private" ${A.priv ? 'checked' : ''}> ${icon('lock')} Private — leave out notes${scope.startsWith('ws:') ? ' and the README' : ''}, emails, private records and raw data rows</label>
     ${A.file ? `<p class="aifile">${icon('file')} <b>${esc(A.file.name)}</b> <span class="muted small">${A.file.table ? `${A.file.desc.rows} rows × ${A.file.desc.cols.length} columns` : fmtSize(A.file.size)}</span>
       <button type="button" class="iconbtn sm" data-act="ai-unfile" aria-label="Remove file">${icon('close')}</button></p>` : ''}
   </section>
-  <div class="aichat" id="aichat" aria-live="polite">${A.msgs.length ? A.msgs.map(aiMsgHTML).join('') : `<div class="aihint muted">
-    <p>Try:</p><ul><li>Which deadlines and follow-ups are in the next 30 days?</li><li>Summarise where each of my articles stands and what is left to do.</li>
-    <li>Which professors have not replied, and what should I write next?</li><li>Attach a CSV and ask: “What stands out in this data?”</li></ul></div>`}
-    ${A.busy ? `<div class="aimsg bot busy"><span class="aidots"><i></i><i></i><i></i></span> <span class="small muted" id="aitry">${esc(A.trying || 'Thinking…')}</span>
+  <div class="aichat" aria-live="polite">${A.msgs.length ? A.msgs.map((m, i) => aiMsgHTML(m, i)).join('')
+    : `<div class="aihint muted"><p>Try:</p><ul>${info.hints.map(h => `<li><button type="button" class="linkbtn" data-act="ai-hint">${esc(h)}</button></li>`).join('')}</ul></div>`}
+    ${A.busy ? `<div class="aimsg bot busy"><span class="aidots"><i></i><i></i><i></i></span> <span class="small muted aitry">${esc(A.trying || 'Thinking…')}</span>
       <button type="button" class="btn sm" data-act="ai-stop">Stop</button></div>` : ''}
   </div>
-  <form id="aiform" class="aiform">
+  <form class="aiform">
     <label class="iconbtn" title="Attach a data file (CSV, TSV, TXT, MD)" aria-label="Attach a data file">${icon('upload')}<input type="file" accept=".csv,.tsv,.txt,.md,.json,text/csv,text/plain" data-act="ai-file" hidden></label>
-    <textarea id="aiq" rows="1" placeholder="Ask about your research…" aria-label="Your question">${esc(A.draft)}</textarea>
+    <textarea class="aiq" rows="1" placeholder="Ask about ${esc(info.global ? 'your research' : info.title)}…" aria-label="Your question">${esc(A.draft)}</textarea>
     <button type="submit" class="btn primary" ${A.busy ? 'disabled' : ''}>Send</button>
   </form>
-  <p class="small muted aichans">${aiCfg.channels.map((c, i) => { const [cls] = chStatus(c); return `<span class="chdot ${cls}"></span>${esc(chName(c))}`; }).join(' → ')}
-    · <a href="#/settings" data-scroll="aiCard">channels</a>${A.msgs.length ? ` · <a href="#" data-act="ai-clear">new chat</a>` : ''}</p>`;
+  <p class="small muted aichans">${aiCfg.channels.map(c => { const [cls] = chStatus(c); return `<span class="chdot ${cls}"></span>${esc(chName(c))}`; }).join(' → ')}
+    · <a href="#/settings" data-scroll="aiCard">channels</a>${A.msgs.length ? ` · <a href="#" data-act="ai-clear">new chat</a>` : ''}</p>
+  </div>`;
 }
-function aiMsgHTML(m) {
+function aiMsgHTML(m, i) {
   if (m.role === 'user') return `<div class="aimsg me">${esc(m.text).replace(/\n/g, '<br>')}</div>`;
   if (m.role === 'data') {
     const d = m.desc;
@@ -1466,27 +1534,21 @@ function aiMsgHTML(m) {
       ${d.cols.map(c => c.type === 'number' ? `<tr><td>${esc(c.name)}</td><td>${c.n}</td><td>${c.missing}</td><td>${fmtNum(c.mean)} ± ${fmtNum(c.sd)}</td><td>${fmtNum(c.median)} [${fmtNum(c.q1)}–${fmtNum(c.q3)}]</td><td>${fmtNum(c.min)}–${fmtNum(c.max)}</td></tr>`
         : `<tr><td>${esc(c.name)}</td><td>${c.n}</td><td>${c.missing}</td><td colspan="3" class="muted">${c.idLike ? 'all different (ID column)' : `${c.distinct} distinct · ${esc(c.top.slice(0, 3).map(([v, k]) => `${v} (${k})`).join(', '))}`}</td></tr>`).join('')}</table></div>
       ${d.groups.length ? `<p class="small"><b>By group</b></p><div class="mdtable"><table><tr><th>Value</th><th>Group</th><th>n</th><th>mean ± sd</th><th>median</th></tr>
-        ${d.groups.map(g => g.stats.map((s, i) => `<tr><td>${i ? '' : esc(g.col) + ' <span class="muted">by ' + esc(g.by) + '</span>'}</td><td>${esc(s.group)}</td><td>${s.n}</td><td>${fmtNum(s.mean)} ± ${fmtNum(s.sd)}</td><td>${fmtNum(s.median)}</td></tr>`).join('')).join('')}</table></div>` : ''}
+        ${d.groups.map(g => g.stats.map((s, j) => `<tr><td>${j ? '' : esc(g.col) + ' <span class="muted">by ' + esc(g.by) + '</span>'}</td><td>${esc(s.group)}</td><td>${s.n}</td><td>${fmtNum(s.mean)} ± ${fmtNum(s.sd)}</td><td>${fmtNum(s.median)}</td></tr>`).join('')).join('')}</table></div>` : ''}
       ${d.cors.length ? `<p class="small">Strongest correlations: ${d.cors.slice(0, 4).map(c => `${esc(c.a)} ~ ${esc(c.b)} r = ${c.r.toFixed(2)}`).join(' · ')}</p>` : ''}</div>`;
   }
   if (m.role === 'error') return `<div class="aimsg err"><b>${esc(m.text)}</b>${m.notes && m.notes.length ? `<ul class="small">${m.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
     <a href="#/settings" data-scroll="aiCard" class="small">Check AI channels</a></div>`;
   return `<div class="aimsg bot"><div class="md">${mdToHtml(m.text)}</div>
     <p class="aimeta">${icon('spark')} ${esc(m.channel)} · ${esc(m.model)}${m.notes && m.notes.length ? ` · <span title="${esc(m.notes.join('\n'))}">switched ${m.notes.length}×</span>` : ''}
-      <button type="button" class="iconbtn sm" data-act="ai-copy" data-i="${m.i}" aria-label="Copy answer">${icon('copy')}</button></p>
+      <button type="button" class="iconbtn sm" data-act="ai-copy" data-i="${i}" aria-label="Copy answer">${icon('copy')}</button></p>
     ${m.notes && m.notes.length ? `<p class="small muted aiswitch">${m.notes.map(esc).join(' · ')}</p>` : ''}</div>`;
 }
 
-function aiContext() {
-  const A = ui.ai;
-  let pool = items;
-  if (A.focus && byId[A.focus]) {
-    const f = A.focus;
-    pool = items.filter(x => x.id === f || KINDS[x.kind].fields.some(fl => fl.type === 'ref' && x[fl.key] === f));
-  }
-  const kinds = A.focus ? [...new Set(pool.map(x => x.kind))] : aiKinds().chosen;
-  const src = A.priv ? pool : pool.map(x => ({ ...x, noShare: false }));
-  const recs = snapshot(src, { kinds, hideNotes: A.priv }).map(({ id, updatedAt, ...r }) => r);
+function aiContext(scope) {
+  const A = chatOf(scope), info = scopeInfo(scope);
+  const src = A.priv ? info.pool : info.pool.map(x => ({ ...x, noShare: false }));
+  const recs = snapshot(src, { kinds: info.kinds, hideNotes: A.priv }).map(({ id, updatedAt, ...r }) => r);
   let json = JSON.stringify(recs);
   let cut = '';
   if (json.length > 60000) { json = json.slice(0, 60000); cut = '\n(The record list was cut short because it is long; say so if the answer may depend on missing records.)'; }
@@ -1498,46 +1560,118 @@ function aiContext() {
     } else fileTxt = A.priv ? `A text file "${A.file.name}" is attached, but Private mode is on, so its content is not shared.` : `Text file "${A.file.name}":\n${A.file.text.slice(0, 20000)}`;
   }
   return `You are the AI assistant inside the private Research Log of ${user.name || 'a researcher'}, a biologist working on virology/vaccines at the bench and on immunopeptidomics and protein machine learning on the computer. Today is ${today()}.
-Answer from the records and data below when the question is about them, and say plainly when something is not in them. Never invent numbers, dates, citations, DOIs or names. Statistics for data files were computed exactly by the app — rely on them. Be concise; use short Markdown lists or tables when they help.
-${A.priv ? 'Private mode: personal notes, emails and raw data rows were left out on purpose.' : ''}
+${info.global ? '' : `This conversation is about: ${info.title}. You can see ${info.sees}.\n`}Answer from the records and data below when the question is about them, and say plainly when something is not in them. Never invent numbers, dates, citations, DOIs or names. Statistics for data files were computed exactly by the app — rely on them. Be concise; use short Markdown lists or tables when they help.
+${A.priv ? 'Private mode: personal notes, READMEs, emails and raw data rows were left out on purpose.' : ''}
 RECORDS (${recs.length}, JSON):
 ${json}${cut}
-${fileTxt ? '\nDATA:\n' + fileTxt : ''}`;
+${info.extra ? '\n' + info.extra : ''}${fileTxt ? '\nDATA:\n' + fileTxt : ''}`;
 }
-let aiAbort = null;
-async function aiSend(q) {
-  const A = ui.ai;
-  if (!q.trim() || A.busy) return;
+// Show a conversation again wherever it is open (the Ask AI page or the side panel).
+function refreshChat(scope, scroll) {
+  if (scope === 'global' && route().view === 'ai') render();
+  if (ui.drawer === scope) renderDrawer();
+  if (scroll) setTimeout(() => app.querySelectorAll(`.aipanel[data-scope="${CSS.escape(scope)}"] .aichat`).forEach(el => {
+    const box = el.closest('.aidrawer-body');
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    else { const last = el.lastElementChild; if (last) window.scrollTo({ top: Math.max(0, last.getBoundingClientRect().top + scrollY - 90), behavior: 'smooth' }); }
+  }), 30);
+}
+async function aiSend(scope, q) {
+  const A = chatOf(scope);
+  if (!q.trim() || A.busy || !scopeInfo(scope)) return;
   A.msgs.push({ role: 'user', text: q.trim() });
   A.draft = ''; A.busy = true; A.trying = 'Thinking…';
-  render(); aiScroll();
+  refreshChat(scope, true);
   const history = A.msgs.filter(m => m.role === 'user' || m.role === 'bot').slice(-11, -1).map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
-  aiAbort = new AbortController();
+  A.abort = new AbortController();
   try {
-    const r = await askChain(aiCfg.channels, [{ role: 'system', content: aiContext() }, ...history, { role: 'user', content: q.trim() }], {
-      signal: aiAbort.signal,
-      onTry: (ch, notes) => { A.trying = `${notes.length ? 'Switching to' : 'Asking'} ${chName(ch)}…`; const el = app.querySelector('#aitry'); if (el) el.textContent = A.trying; },
+    const r = await askChain(aiCfg.channels, [{ role: 'system', content: aiContext(scope) }, ...history, { role: 'user', content: q.trim() }], {
+      signal: A.abort.signal,
+      onTry: (ch, notes) => {
+        A.trying = `${notes.length ? 'Switching to' : 'Asking'} ${chName(ch)}…`;
+        app.querySelectorAll(`.aipanel[data-scope="${CSS.escape(scope)}"] .aitry`).forEach(el => { el.textContent = A.trying; });
+      },
     });
-    A.msgs.push({ role: 'bot', text: r.text, model: r.model, channel: chName(r.channel), notes: r.notes, i: A.msgs.length });
+    A.msgs.push({ role: 'bot', text: r.text, model: r.model, channel: chName(r.channel), notes: r.notes });
   } catch (e) {
     if (e.name === 'AbortError') A.msgs.push({ role: 'error', text: 'Stopped.' });
     else A.msgs.push({ role: 'error', text: e.message, notes: e.notes });
   } finally {
-    A.busy = false; aiAbort = null;
-    if (route().view === 'ai') { render(); aiScroll(); }
-    else toast('Ask AI: answer ready');
+    A.busy = false; A.abort = null;
+    const shown = (scope === 'global' && route().view === 'ai') || ui.drawer === scope;
+    refreshChat(scope, true);
+    if (!shown) toast('Ask AI: answer ready');
   }
 }
-function aiScroll() { const el = app.querySelector('#aichat'); if (el) el.lastElementChild?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
-async function aiAttach(f) {
-  if (f.size > 5 * 1048576) return toast('That file is over 5 MB. Save a smaller CSV (or a part of it).', true);
-  const text = await f.text();
-  const table = /\.(csv|tsv|txt)$/i.test(f.name) || /csv|tab-separated/.test(f.type) ? parseDelimited(text) : null;
+function aiAttachText(scope, name, text, size) {
+  const A = chatOf(scope);
+  const table = /\.(csv|tsv|txt)$/i.test(name) ? parseDelimited(text) : null;
   const good = table && table.header.length > 1;
-  ui.ai.file = good ? { name: f.name, table, desc: describe(table), size: f.size } : { name: f.name, text, size: f.size };
-  if (good) ui.ai.msgs.push({ role: 'data', name: f.name, desc: ui.ai.file.desc });
-  render(); aiScroll();
+  A.file = good ? { name, table, desc: describe(table), size } : { name, text, size };
+  if (good) A.msgs.push({ role: 'data', name, desc: A.file.desc });
+  refreshChat(scope, true);
   toast(good ? 'Data summarised — now ask a question about it' : 'File attached');
+}
+async function aiAttach(scope, f) {
+  if (f.size > 5 * 1048576) return toast('That file is over 5 MB. Save a smaller CSV (or a part of it).', true);
+  aiAttachText(scope, f.name, await f.text(), f.size);
+}
+// "Analyse with AI" on a data file stored in a folder.
+async function analyseStoredFile(f) {
+  if (f.size > 5 * 1048576) return toast('That file is over 5 MB — too large to analyse here.', true);
+  let blob;
+  try { blob = await fileBlob(f); } catch (e) { return toast(e.message, true); }
+  const scope = 'ws:' + f.app;
+  openDrawer(scope);
+  aiAttachText(scope, f.name, await blob.text(), f.size);
+}
+
+/* ---- the side panel that holds a page's own conversation ---- */
+function openDrawer(scope) {
+  scope = scope || currentScope();
+  if (!scope) return;
+  if (aiCfg === null && store.mode === 'cloud') loadAi();
+  ui.drawer = scope;
+  renderDrawer();
+  const d = app.querySelector('#aidrawer');
+  d.hidden = false;
+  requestAnimationFrame(() => d.classList.add('open'));
+  document.body.classList.add('drawer-open');
+  setTimeout(() => { const q = d.querySelector('.aiq'); if (q && !('ontouchstart' in window)) q.focus(); }, 80);
+}
+function closeDrawer() {
+  const d = app.querySelector('#aidrawer');
+  ui.drawer = null;
+  document.body.classList.remove('drawer-open');
+  if (!d) return;
+  d.classList.remove('open');
+  setTimeout(() => { if (!ui.drawer) { d.hidden = true; d.innerHTML = ''; } }, 180);
+  renderAiFab();
+}
+function renderDrawer() {
+  const d = app.querySelector('#aidrawer');
+  if (!d || !ui.drawer) return;
+  const info = scopeInfo(ui.drawer);
+  const keep = d.querySelector('.aiq');
+  const hadFocus = keep && document.activeElement === keep;
+  d.innerHTML = `<div class="aidrawer-head">
+      <span class="aidrawer-t">${icon('spark')} Ask AI <span class="muted">· ${esc(info ? (info.global ? 'whole log' : info.title) : '')}</span></span>
+      <a class="iconbtn sm" href="#/ai" data-act="ai-full" aria-label="Open the full Ask AI page">${icon('ext')}</a>
+      <button type="button" class="iconbtn" data-act="ai-close" aria-label="Close">${icon('close')}</button></div>
+    <div class="aidrawer-body">${chatPanelHTML(ui.drawer, false)}</div>`;
+  if (hadFocus) { const q = d.querySelector('.aiq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  renderAiFab();
+}
+function renderAiFab() {
+  const b = app.querySelector('#aifab');
+  if (!b) return;
+  const r = route(), scope = currentScope(r);
+  b.hidden = !scope || !!ui.drawer || r.view === 'ai' || !!r.edit || store.mode !== 'cloud';
+  if (!b.hidden) {
+    const info = scopeInfo(scope), A = chatOf(scope);
+    b.innerHTML = `${icon('spark')}<span>Ask AI${info && !info.global ? ` · ${esc(info.title.length > 18 ? info.title.slice(0, 17) + '…' : info.title)}` : ''}</span>${A.msgs.length ? `<i>${A.msgs.filter(m => m.role === 'bot').length}</i>` : ''}`;
+    b.classList.toggle('lift', !!r.section && !r.ws);
+  }
 }
 
 /* ---------------- search ---------------- */
@@ -1823,13 +1957,22 @@ app.addEventListener('click', async e => {
       if (i >= 0 && j >= 0 && j < L.length) { [L[i], L[j]] = [L[j], L[i]]; await saveAi(); }
       break;
     }
-    case 'ai-kind': { const { chosen } = aiKinds(); ui.ai.kinds = chosen.includes(t.dataset.k) ? chosen.filter(k => k !== t.dataset.k) : [...chosen, t.dataset.k]; render(); break; }
-    case 'ai-private': ui.ai.priv = t.checked; if (!t.checked) toast('Private is off: notes and raw data rows will be sent to the AI provider', true); render(); break;
-    case 'ai-unfocus': ui.ai.focus = null; render(); break;
-    case 'ai-unfile': ui.ai.file = null; render(); break;
-    case 'ai-stop': if (aiAbort) aiAbort.abort(); break;
-    case 'ai-clear': e.preventDefault(); ui.ai.msgs = []; ui.ai.file = null; render(); break;
-    case 'ai-copy': { const m = ui.ai.msgs[Number(t.dataset.i)]; if (m) copyText(m.text, 'Answer copied'); break; }
+    case 'ai-kind': { const { chosen } = aiKinds(); ui.ai.kinds = chosen.includes(t.dataset.k) ? chosen.filter(k => k !== t.dataset.k) : [...chosen, t.dataset.k]; refreshChat('global'); break; }
+    case 'ai-unfocus': ui.ai.focus = null; refreshChat('global'); break;
+    case 'ai-open': openDrawer(); break;
+    case 'ai-close': closeDrawer(); break;
+    case 'ai-full': { const sc = ui.drawer; closeDrawer(); if (sc && sc.startsWith('ws:')) ui.ai.focus = sc.slice(3); break; }
+    case 'ai-private': case 'ai-unfile': case 'ai-stop': case 'ai-clear': case 'ai-copy': case 'ai-hint': {
+      const scope = (t.closest('[data-scope]') || {}).dataset?.scope || 'global', A = chatOf(scope);
+      if (act === 'ai-private') { A.priv = t.checked; if (!t.checked) toast('Private is off: notes, READMEs and raw data rows will be sent to the AI provider', true); }
+      if (act === 'ai-unfile') A.file = null;
+      if (act === 'ai-stop' && A.abort) A.abort.abort();
+      if (act === 'ai-clear') { e.preventDefault(); A.msgs = []; A.file = null; }
+      if (act === 'ai-copy') { const m = A.msgs[Number(t.dataset.i)]; if (m) copyText(m.text, 'Answer copied'); break; }
+      if (act === 'ai-hint') return aiSend(scope, t.textContent);
+      refreshChat(scope);
+      break;
+    }
     case 'link-new': linkEditor(null); break;
     case 'link-edit': linkEditor(sharing.links.find(l => l.id === t.dataset.id)); break;
     case 'link-copy': copyLink(sharing.links.find(l => l.id === t.dataset.id)); break;
@@ -1941,6 +2084,7 @@ app.addEventListener('click', async e => {
     case 'openfile': if (fid) openFile(fid); break;
     case 'dlfile': if (fid) downloadFile(fid); break;
     case 'fileinfo': if (fid) fileInfo(fid); break;
+    case 'aianalyse': if (fid) analyseStoredFile(fid); break;
     case 'lk-add': linkForm(a); break;
     case 'lk-edit': linkForm(a, t.dataset.id); break;
     case 'lk-del': delLink(a, t.dataset.id); break;
@@ -1961,7 +2105,7 @@ app.addEventListener('click', async e => {
 app.addEventListener('click', e => {
   const a = e.target.closest('a[data-scroll]'); if (a) ui.scrollTo = a.dataset.scroll;
   const g = e.target.closest('a[data-group]'); if (g) ui.appGroup = g.dataset.group;
-  const f = e.target.closest('a[data-aifocus]'); if (f) ui.ai.focus = f.dataset.aifocus;
+
 }, true);
 
 app.addEventListener('change', async e => {
@@ -1979,7 +2123,7 @@ app.addEventListener('change', async e => {
     if (f) importData(f);
   } else if (t.dataset.act === 'ai-file') {
     const f = t.files[0]; t.value = '';
-    if (f) aiAttach(f);
+    if (f) aiAttach((t.closest('[data-scope]') || {}).dataset?.scope || 'global', f);
   } else if (t.dataset.act === 'rf-import') {
     const f = t.files[0]; t.value = '';
     const a = byId[route().ws];
@@ -1999,8 +2143,8 @@ app.addEventListener('change', async e => {
 
 app.addEventListener('input', e => {
   const t = e.target;
-  if (t.id === 'aiq') {
-    ui.ai.draft = t.value;
+  if (t.classList.contains('aiq')) {
+    chatOf(t.closest('[data-scope]').dataset.scope).draft = t.value;
     t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px';
     return;
   }
@@ -2024,13 +2168,14 @@ app.addEventListener('input', e => {
 
 app.addEventListener('submit', e => {
   if (e.target.id === 'edform') { e.preventDefault(); saveEditor(); }
-  if (e.target.id === 'aiform') { e.preventDefault(); aiSend(app.querySelector('#aiq').value); }
+  if (e.target.classList.contains('aiform')) { e.preventDefault(); aiSend(e.target.closest('[data-scope]').dataset.scope, e.target.querySelector('.aiq').value); }
 });
 app.addEventListener('keydown', e => {
-  if (e.target.id === 'aiq' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !('ontouchstart' in window)) { e.preventDefault(); aiSend(e.target.value); }
+  if (e.target.classList && e.target.classList.contains('aiq') && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !('ontouchstart' in window)) { e.preventDefault(); aiSend(e.target.closest('[data-scope]').dataset.scope, e.target.value); }
 });
 addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
+  if (e.key === 'Escape' && ui.drawer && !document.querySelector('.ovl') && !editor) { closeDrawer(); return; }
   const ov = document.querySelector('.ovl');
   if (e.key === 'Escape' && ov) { if (!ov._dirty || confirm('Discard your changes?')) ov._close(); return; }
   if (e.key === 'Escape' && editor) { if (!editor.dirty || confirm('Discard your changes?')) closeEditor(); }
