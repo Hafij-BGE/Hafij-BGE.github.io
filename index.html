@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Md. Hafijur Rahman</title>
+<meta name="description" content="Md. Hafijur Rahman — MSc student in Biomedical Technology at Dokuz Eylül University. Immunopeptidomics, protein machine learning, molecular modelling and vaccine research.">
+<meta property="og:title" content="Md. Hafijur Rahman">
+<meta property="og:description" content="Immunopeptidomics, protein machine learning, molecular modelling and vaccine research.">
+<meta property="og:type" content="profile">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232546C9'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EH%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F3F5F4;
+    --ink: #18212B;
+    --muted: #56616C;
+    --rule: #D3DAD8;
+    --link: #2546C9;
+    --tile-ink: #FFFFFF;
+    --hydrophobic: #3462C4;
+    --positive: #C23D36;
+    --negative: #8E3A9C;
+    --polar: #23805A;
+    --special: #B87A12;
+    --shadow: rgba(24, 33, 43, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #11171D;
+      --ink: #E6ECEF;
+      --muted: #9AA6B0;
+      --rule: #2A343D;
+      --link: #8FA6FF;
+      --hydrophobic: #4E7EE0;
+      --positive: #D9564F;
+      --negative: #A955B6;
+      --polar: #2F9A6D;
+      --special: #CF931F;
+      --shadow: rgba(0, 0, 0, .4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #11171D; --ink: #E6ECEF; --muted: #9AA6B0; --rule: #2A343D; --link: #8FA6FF;
+    --hydrophobic: #4E7EE0; --positive: #D9564F; --negative: #A955B6; --polar: #2F9A6D; --special: #CF931F;
+    --shadow: rgba(0, 0, 0, .4);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    font-optical-sizing: auto;
+  }
+  a { color: var(--link); text-underline-offset: .18em; text-decoration-thickness: 1px; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 3px solid var(--link); outline-offset: 3px; border-radius: 2px; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  @media (min-width: 720px) { .wrap { padding: 0 40px; } }
+
+  /* ---------- Hero: the name as a peptide ---------- */
+  header.hero { padding: 56px 0 40px; }
+  @media (min-width: 720px) { header.hero { padding: 96px 0 56px; } }
+  .hero-grid { display: grid; gap: 32px; align-items: end; }
+  @media (min-width: 860px) { .hero-grid { grid-template-columns: 1fr auto; gap: 56px; } }
+
+  h1.peptide {
+    margin: 0;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    font-size: clamp(1.35rem, 5.4vw, 2.6rem);
+    line-height: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5em .9em;
+  }
+  .word { display: inline-flex; gap: .14em; }
+  .aa {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 1.55em; height: 1.55em;
+    border-radius: .2em;
+    color: var(--tile-ink);
+    box-shadow: 0 1px 0 var(--shadow);
+    cursor: help;
+  }
+  .aa.hyd { background: var(--hydrophobic); }
+  .aa.pos { background: var(--positive); }
+  .aa.neg { background: var(--negative); }
+  .aa.pol { background: var(--polar); }
+  .aa.spc { background: var(--special); }
+  .aa::after {
+    content: attr(data-name);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-family: "Source Serif 4", Georgia, serif;
+    font-weight: 400;
+    font-size: .9rem;
+    line-height: 1.2;
+    padding: 5px 9px;
+    border-radius: 4px;
+    background: var(--ink);
+    color: var(--paper);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s;
+  }
+  .aa:hover::after, .aa:focus-visible::after { opacity: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .aa { animation: read .38s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i) * 55ms); }
+    @keyframes read { from { opacity: 0; transform: translateY(.25em); } to { opacity: 1; transform: none; } }
+  }
+
+  .name-plain {
+    margin: 28px 0 0;
+    font-size: clamp(1.6rem, 3.4vw, 2.25rem);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -.01em;
+  }
+  .role { margin: 8px 0 0; color: var(--muted); font-size: 1.15rem; }
+  .decode {
+    margin: 22px 0 0;
+    max-width: 58ch;
+    font-size: .98rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  .portrait {
+    order: -1;
+    width: 112px; height: 134px;
+    object-fit: cover;
+    border-radius: 6px;
+    display: block;
+    box-shadow: 0 10px 30px -12px var(--shadow);
+  }
+  @media (min-width: 860px) { .portrait { order: 0; width: 200px; height: 240px; } }
+
+  nav.jump { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 1rem; }
+  nav.jump a { color: var(--ink); text-decoration-color: var(--rule); }
+  nav.jump a:hover { text-decoration-color: var(--link); }
+
+  /* ---------- Sections ---------- */
+  main section {
+    display: grid;
+    gap: 8px 48px;
+    padding: 40px 0;
+    border-top: 1px solid var(--rule);
+  }
+  @media (min-width: 860px) {
+    main section { grid-template-columns: 200px minmax(0, 1fr); padding: 56px 0; }
+  }
+  main h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .body { max-width: 66ch; }
+  .body > :first-child { margin-top: 0; }
+  .body p { margin: 0 0 1em; }
+
+  h3 { margin: 0; font-size: 1.15rem; font-weight: 600; line-height: 1.35; }
+  .meta { color: var(--muted); font-size: .98rem; }
+
+  .project { padding: 0 0 26px; }
+  .project + .project { padding-top: 26px; border-top: 1px dashed var(--rule); }
+  .project p { margin: 6px 0 0; }
+  .find { margin: 10px 0 0; padding-left: 14px; border-left: 3px solid var(--hydrophobic); font-size: 1.02rem; }
+  .lock { font-size: .95rem; color: var(--muted); }
+
+  ol.dated, ul.dated { list-style: none; margin: 0; padding: 0; }
+  .dated li { display: grid; grid-template-columns: 5.5rem 1fr; gap: 16px; padding: 0 0 18px; }
+  .dated .yr { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 1rem; padding-top: .1em; }
+  .dated p { margin: 4px 0 0; }
+
+  .pub-title { font-weight: 600; }
+
+  ul.plain { margin: 0; padding-left: 1.1em; }
+  ul.plain li { margin-bottom: 6px; }
+
+  .skills { display: grid; gap: 18px; }
+  @media (min-width: 620px) { .skills { grid-template-columns: 1fr 1fr; gap: 24px 40px; } }
+  .skills h3 { font-size: 1.02rem; margin-bottom: 4px; }
+  .skills p { margin: 0; color: var(--ink); font-size: 1.02rem; }
+
+  .contact { display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 1.05rem; }
+
+  footer { padding: 40px 0 56px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .95rem; }
+
+  .theme-toggle {
+    position: fixed; top: 14px; right: 14px;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+    display: grid; place-items: center;
+    cursor: pointer;
+  }
+  .theme-toggle svg { width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" type="button" aria-label="Switch between light and dark theme">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+</button>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <h1 class="peptide" aria-label="Md. Hafijur Rahman">
+          <span class="word" aria-hidden="true">
+            <span class="aa hyd" tabindex="0" style="--i:0" data-name="Methionine (M)">M</span><span class="aa neg" tabindex="0" style="--i:1" data-name="Aspartate (D)">D</span>
+          </span>
+          <span class="word" aria-hidden="true">
+            <span class="aa pos" tabindex="0" style="--i:2" data-name="Histidine (H)">H</span><span class="aa hyd" tabindex="0" style="--i:3" data-name="Alanine (A)">A</span><span class="aa hyd" tabindex="0" style="--i:4" data-name="Phenylalanine (F)">F</span><span class="aa hyd" tabindex="0" style="--i:5" data-name="Isoleucine (I)">I</span><span class="aa hyd" tabindex="0" style="--i:6" data-name="Leucine or isoleucine (J)">J</span><span class="aa spc" tabindex="0" style="--i:7" data-name="Selenocysteine (U)">U</span><span class="aa pos" tabindex="0" style="--i:8" data-name="Arginine (R)">R</span>
+          </span>
+          <span class="word" aria-hidden="true">
+            <span class="aa pos" tabindex="0" style="--i:9" data-name="Arginine (R)">R</span><span class="aa hyd" tabindex="0" style="--i:10" data-name="Alanine (A)">A</span><span class="aa pos" tabindex="0" style="--i:11" data-name="Histidine (H)">H</span><span class="aa hyd" tabindex="0" style="--i:12" data-name="Methionine (M)">M</span><span class="aa hyd" tabindex="0" style="--i:13" data-name="Alanine (A)">A</span><span class="aa pol" tabindex="0" style="--i:14" data-name="Asparagine (N)">N</span>
+          </span>
+        </h1>
+
+        <p class="name-plain">Md. Hafijur Rahman</p>
+        <p class="role">MSc student in Biomedical Technology, Dokuz Eylül University, İzmir</p>
+        <p class="decode">Every letter of my name is a valid amino-acid code. J stands for leucine or isoleucine, the pair a mass spectrometer cannot tell apart.</p>
+
+        <nav class="jump" aria-label="Sections">
+          <a href="#about">About</a>
+          <a href="#research">Current research</a>
+          <a href="#publications">Publications</a>
+          <a href="#projects">Earlier projects</a>
+          <a href="#education">Education</a>
+          <a href="#contact">Contact</a>
+        </nav>
+      </div>
+      <img class="portrait" src="photo.jpg" alt="Portrait of Md. Hafijur Rahman" width="359" height="431">
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="about" aria-labelledby="about-h">
+    <h2 id="about-h">About</h2>
+    <div class="body">
+      <p>I work across experimental and computational biology. My lab background is in virology, vaccine development and molecular biology; my computational work covers molecular modelling, multi-omics analysis and deep learning. My current research focuses on deep learning–based prediction of protein–protein interactions.</p>
+      <p>My recent projects are preregistered where possible, log every decision, and keep withdrawn results on the record rather than quietly removing them.</p>
+      <p class="meta">Bengali (native), English (C1), Turkish (C1)</p>
+    </div>
+  </section>
+
+  <section id="research" aria-labelledby="research-h">
+    <h2 id="research-h">Current research</h2>
+    <div class="body">
+
+      <article class="project">
+        <h3><a href="https://github.com/Hafij-BGE/PXD024871_mapping">A preregistered sequence-only CNN benchmark for HLA class-I presentation</a></h3>
+        <p>Can a 1D convolutional network tell experimentally observed HLA class-I peptides from matched decoys using sequence alone, and how does it compare with published presentation predictors on identical rows? Built on the public PRIDE dataset PXD024871, preregistered before any model was trained, and frozen with a checksum-verified record.</p>
+        <p class="find">The CNN reached an average precision of 0.7551 on held-out units. Four independently built predictors scored within 0.0046 of each other, which suggests the CNN's lead may partly reflect how this cohort's decoys were constructed. A second cohort is needed to settle it.</p>
+        <p class="meta">Python and PyTorch. Not yet peer reviewed.</p>
+      </article>
+
+      <article class="project">
+        <h3>Are bacterial HLA ligands in tumour immunopeptidomes real?</h3>
+        <p>An error-controlled reanalysis of public tumour immunopeptidomes, with entrapment, human-homology and benign-tissue controls, auditing a public atlas of bacteria-derived HLA epitopes. MSc thesis project using public data only.</p>
+        <p class="find">Re-searching the raw files behind one dataset at 1% FDR found 20 bacterial peptides where the atlas attributes 6,363 — 143 to 176 times fewer after adjusting for coverage.</p>
+        <p class="lock">Repository currently private; available on request.</p>
+      </article>
+
+      <article class="project">
+        <h3>Mechanism-resolved prediction of cancer mutation effects in SH3 domains</h3>
+        <p>Does a cancer missense mutation in a human SH3 domain destabilise the fold, or leave it intact and change binding? Every result is rebuilt from raw data, starting with the COSMIC atlas, using protein language models and measured folding energies.</p>
+        <p class="find">Folding effects are predictable (median Spearman ρ 0.839 on 15 held-out domains) and track residue burial, not the binding interface. Binding effects are not yet predictable from current data, and the shortfall is quantified.</p>
+        <p class="lock">Repository currently private; available on request.</p>
+      </article>
+
+    </div>
+  </section>
+
+  <section id="publications" aria-labelledby="pubs-h">
+    <h2 id="pubs-h">Publications</h2>
+    <div class="body">
+      <ol class="dated" reversed>
+        <li>
+          <span class="yr">2023</span>
+          <div>
+            <span class="pub-title"><i>Phyllanthus emblica</i> (Amla) methanolic extract regulates multiple checkpoints in 15-lipoxygenase mediated inflammopathies: computational simulation and <i>in vitro</i> evidence</span>
+            <p><a href="https://doi.org/10.1016/j.jsps.2023.06.014">doi:10.1016/j.jsps.2023.06.014</a></p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2023</span>
+          <div>
+            <span class="pub-title"><i>In vitro</i> and <i>in silico</i> investigation of garlic's (<i>Allium sativum</i>) bioactivity against 15-lipoxygenase mediated inflammopathies</span>
+            <p><a href="https://doi.org/10.34172/jhp.2023.31">doi:10.34172/jhp.2023.31</a></p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2021</span>
+          <div>
+            <span class="pub-title">Molecular optimization, docking, and dynamic simulation profiling of selective aromatic phytochemical ligands in blocking the SARS-CoV-2 S protein attachment to ACE2 receptor: an in-silico approach of targeted drug designing</span>
+            <p><a href="https://doi.org/10.5455/javar.2021.h481">doi:10.5455/javar.2021.h481</a></p>
+          </div>
+        </li>
+      </ol>
+
+      <h3 style="margin-top:18px">Presentations</h3>
+      <ul class="dated" style="margin-top:12px">
+        <li>
+          <span class="yr">2025</span>
+          <div>
+            <span class="pub-title">Integrated CRISPR–microfluidic platform for automated point-of-care pathogen detection</span>
+            <p class="meta">Oral presentation, DEUISGR 2025, Dokuz Eylül University, İzmir. Co-author: Ö. Cihanbeğendi.</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2020</span>
+          <div>
+            <span class="pub-title">Molecular docking of phytochemicals as potential inhibitors of breast cancer targeting HER-2: in-silico screening</span>
+            <p class="meta">Poster, IPPC 2020. Selected as an Outstanding Poster among 243 submissions in the Life Science category.</p>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="projects" aria-labelledby="projects-h">
+    <h2 id="projects-h">Earlier projects</h2>
+    <div class="body">
+      <ul class="dated">
+        <li>
+          <span class="yr">2023–24</span>
+          <div>
+            <span class="pub-title">Development of an attenuated fowlpox vaccine from a wild isolate</span>
+            <p>MSc thesis, Bangladesh Agricultural University (BAURES project). Passaged the virus in embryonated duck eggs for attenuation, confirmed it at every passage, formulated the vaccine with an adjuvant, and ran the chicken trial and antibody analysis.</p>
+            <p class="meta">Supervisors: Dr. Shahidul Haque, Dr. Md. Bahanur Rahman</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2021–22</span>
+          <div>
+            <span class="pub-title">Drug discovery against dengue virus targeting the NS2B/NS3 protein: an <i>in silico</i> approach</span>
+            <p>Literature review, screening of available drugs, identification of structural analogues, and <i>in silico</i> and statistical analysis.</p>
+            <p class="meta">Supervisor: Khandker Khaldun Islam, Khulna University</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">B.Sc.</span>
+          <div>
+            <span class="pub-title"><i>In silico</i> investigation of checkpoints in Alzheimer's disease and the potential of <i>Rauvolfia serpentina</i> phytochemicals to block the BACE1 receptor</span>
+            <p>Undergraduate thesis, Khulna University.</p>
+            <p class="meta">Supervisors: Khandker Khaldun Islam, Dr. S M Abdul-Awal</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2021</span>
+          <div>
+            <span class="pub-title">Target specificity of selective bioactive compounds in blocking the α-dystroglycan receptor to suppress Lassa virus infection</span>
+            <p>Designed the project framework and ran docking, ADMET, molecular dynamics simulation and statistical analysis.</p>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="skills" aria-labelledby="skills-h">
+    <h2 id="skills-h">Skills</h2>
+    <div class="body skills">
+      <div>
+        <h3>Computational</h3>
+        <p>Python, PyTorch, deep learning, protein language models (ESM-2), proteomics and immunopeptidomics, genomics, multi-omics, molecular docking and dynamics simulation, statistical analysis and visualisation, Docker, Git</p>
+      </div>
+      <div>
+        <h3>Laboratory</h3>
+        <p>Molecular biology techniques, microbial culture and biochemical testing, virus propagation and vaccine development, DNA/RNA extraction and quantification</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="education" aria-labelledby="edu-h">
+    <h2 id="edu-h">Education</h2>
+    <div class="body">
+      <ul class="dated">
+        <li>
+          <span class="yr">Ongoing</span>
+          <div><span class="pub-title">M.Sc. in Biomedical Technology</span><p class="meta">Dokuz Eylül University, Türkiye</p></div>
+        </li>
+        <li>
+          <span class="yr">2025</span>
+          <div><span class="pub-title">M.Sc. in Biotechnology</span><p class="meta">Bangladesh Agricultural University, CGPA 3.73 / 4.00</p></div>
+        </li>
+        <li>
+          <span class="yr">2022</span>
+          <div><span class="pub-title">B.Sc. in Biotechnology and Genetic Engineering</span><p class="meta">Khulna University, Bangladesh, CGPA 3.67 / 4.00</p></div>
+        </li>
+      </ul>
+
+      <h3 style="margin-top:18px">Awards</h3>
+      <ul class="dated" style="margin-top:12px">
+        <li><span class="yr">2024</span><div>Türkiye Bursları Scholarship</div></li>
+        <li><span class="yr">2023</span><div>National Science and Technology (NST) Fellowship, Bangladesh</div></li>
+        <li><span class="yr">2018–22</span><div>Merit Scholarships, Khulna University (2018, 2019, 2021, 2022)</div></li>
+      </ul>
+
+      <h3 style="margin-top:18px">Leadership and volunteering</h3>
+      <ul class="plain" style="margin-top:8px">
+        <li>İzmir International Students Association: organising cultural and educational programmes for international students</li>
+        <li>HELIX, Khulna University Biotech Club: Managing Director and ICT Advisor</li>
+        <li>Blood donation campaigns (BADHAN), anti-corruption awareness (Sotota Songho) and Bangladesh Scouts</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="contact" aria-labelledby="contact-h">
+    <h2 id="contact-h">Contact</h2>
+    <div class="body">
+      <div class="contact">
+        <a href="mailto:hafijurrahman.hr10@gmail.com">hafijurrahman.hr10@gmail.com</a>
+        <a href="https://orcid.org/0000-0003-4031-6475">ORCID 0000-0003-4031-6475</a>
+        <a href="https://github.com/Hafij-BGE">GitHub</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">İzmir, Türkiye</div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.querySelector('.theme-toggle');
+    try { var saved = localStorage.getItem('theme'); if (saved) root.setAttribute('data-theme', saved); } catch (e) {}
+    btn.addEventListener('click', function () {
+      var current = root.getAttribute('data-theme') ||
+        (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      var next = current === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('theme', next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
