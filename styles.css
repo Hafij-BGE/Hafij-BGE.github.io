@@ -220,3 +220,10 @@ footer.site a { color: var(--muted); }
 footer.site .spacer { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* ---------- live sections (filled by live.js) ---------- */
+.live-bar { height: 6px; border-radius: 3px; margin-top: 12px; background: color-mix(in srgb, var(--dry, #2563EB) 15%, transparent); overflow: hidden; }
+.live-bar i { display: block; height: 100%; border-radius: 3px; background: var(--dry, #2563EB); }
+.live-note { margin-top: 12px; font-size: .9rem; }
+.live-repos:not(:empty) { margin: 16px 0 4px; }
+.meta.small { font-size: .85rem; margin-top: 4px !important; }

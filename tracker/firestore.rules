@@ -3,14 +3,29 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isOwner(uid) {
+    function isOwnerEmail() {
       return request.auth != null
-        && request.auth.uid == uid
         && request.auth.token.email_verified == true
         && request.auth.token.email in ['YOUR_EMAIL@gmail.com'];
     }
+    function isOwner(uid) { return isOwnerEmail() && request.auth.uid == uid; }
+
+    // Everything private: records, files, settings.
     match /users/{uid}/{document=**} {
       allow read, write: if isOwner(uid);
+    }
+    // Read-only links: one encrypted record per link. Anyone holding the link can fetch that one
+    // record (the key to open it is only in the link); nobody can list or find the others.
+    match /shares/{shareId} {
+      allow get: if shareId.size() >= 20;
+      allow create, update: if isOwnerEmail() && shareId.size() >= 20 && request.resource.data.owner == request.auth.uid
+        && request.resource.data.data is string && request.resource.data.data.size() < 1000000;
+      allow delete: if isOwnerEmail();
+    }
+    // The public website feed: only the record types and records the owner chose to publish.
+    match /public/site {
+      allow get: if true;
+      allow write: if isOwnerEmail();
     }
     // Everything else is denied.
   }

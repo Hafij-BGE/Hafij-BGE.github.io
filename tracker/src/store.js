@@ -150,6 +150,11 @@ export class CloudStore extends Emitter {
     return snap.exists() ? snap.data() : null;
   }
   setMeta(name, data) { return setDoc(doc(this.db, 'users', this.user.uid, 'meta', name), clean(data)); }
+  /* ---- read-only links and the public website feed (outside the private area) ---- */
+  setShare(id, data) { return setDoc(doc(this.db, 'shares', id), { ...data, owner: this.user.uid, updatedAt: Date.now() }); }
+  deleteShare(id) { return deleteDoc(doc(this.db, 'shares', id)); }
+  setSite(data) { return setDoc(doc(this.db, 'public', 'site'), { ...data, updatedAt: Date.now() }); }
+
   /* ---- files ---- */
   chunkRef(id, i) { return doc(this.db, 'users', this.user.uid, 'files', id, 'chunks', chunkId(i)); }
   // Writes the pieces first and the file's entry last, so other devices only list it once it is whole.
@@ -247,6 +252,8 @@ export class LocalStore extends Emitter {
   removePhoto(id) { try { localStorage.removeItem('rl.photo.' + id); } catch (e) {} }
   async getMeta(name) { try { return JSON.parse(localStorage.getItem('rl.meta.' + name) || 'null'); } catch (e) { return null; } }
   async setMeta(name, data) { try { localStorage.setItem('rl.meta.' + name, JSON.stringify(data)); } catch (e) {} }
+  async setShare() { throw new Error('Sign in with Google to share.'); }
+  async deleteShare() {} async setSite() { throw new Error('Sign in with Google to update the website.'); }
   // Files need Google sync; this browser alone has too little room for them.
   async putFile() { throw new Error('Sign in with Google to store files.'); }
   async replaceFile() { throw new Error('Sign in with Google to store files.'); }

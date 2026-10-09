@@ -89,7 +89,7 @@
 
   <section class="section">
     <div class="stat-row">
-      <div class="stat"><b>3</b><span>peer-reviewed papers</span></div>
+      <div class="stat"><b data-live="papers-count">3</b><span>peer-reviewed papers</span></div>
       <div class="stat"><b>2</b><span>MSc degrees</span></div>
       <div class="stat"><b>1</b><span>vaccine taken to trial</span></div>
       <div class="stat"><b>C1</b><span>English &amp; Turkish</span></div>
@@ -138,6 +138,18 @@
     <div class="cta-row"><a class="btn ghost" href="research.html">All research</a></div>
   </section>
 
+  <section class="section" data-live-wrap="projects" hidden>
+    <h2>Now working on</h2>
+    <div class="cards two" data-live="projects" data-count="4"></div>
+    <p class="meta live-note">Updated automatically from my research log and GitHub.</p>
+  </section>
+
+  <section class="section" data-live-wrap="repos" hidden>
+    <h2>Latest on GitHub</h2>
+    <div class="cards two" data-live="repos" data-count="4"></div>
+    <div class="cta-row"><a class="btn ghost" href="https://github.com/Hafij-BGE">All repositories</a></div>
+  </section>
+
 </main>
 
 <footer class="site"><div class="inner">
@@ -150,6 +162,7 @@
 </div></footer>
 
 <script src="app.js"></script>
+<script src="live.js" defer></script>
 <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 </body>
 </html>

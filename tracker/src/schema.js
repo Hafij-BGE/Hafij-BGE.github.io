@@ -15,6 +15,20 @@ export const APP_STATUS = ['Researching', 'Contacted supervisor', 'Preparing', '
 // Every application gets these folders to start with (the same layout as the owner's own PC folders).
 export const APP_FOLDERS = ['01_Program_Info', '02_My_Profile', '03_Professors', '04_Templates_General'];
 export const PROF_STATUS = ['Not contacted', 'Emailed', 'Follow-up sent', 'Replied', 'Meeting / interview', 'Positive', 'No position', 'No reply'];
+// Where an application stands, for the PhD list: Ongoing, Upcoming, Missed or Done.
+export const APP_GROUPS = [
+  { id: 'ongoing', label: 'Ongoing', hint: 'Started — preparing, contacted, submitted, interview or offer' },
+  { id: 'upcoming', label: 'Upcoming', hint: 'Not started yet' },
+  { id: 'missed', label: 'Missed', hint: 'Deadline passed before submitting' },
+  { id: 'done', label: 'Done', hint: 'Accepted, rejected or declined' },
+];
+export function appGroup(x) {
+  const st = x.status || 'Researching';
+  if (['Accepted', 'Rejected', 'Declined'].includes(st)) return 'done';
+  if (APP_OPEN.includes(st) && x.deadline && x.deadline < today()) return 'missed';
+  if (st === 'Researching') return 'upcoming';
+  return 'ongoing';
+}
 export const APP_DOCS = ['CV', 'Statement of purpose', 'Research proposal', 'References', 'Transcripts', 'Language test', 'Publications', 'Portfolio / writing sample'];
 
 export const KINDS = {
@@ -82,7 +96,7 @@ export const KINDS = {
   project: {
     label: 'Project', plural: 'Projects', color: 'var(--dry)',
     sort: (a, b) => statusRank(a.status) - statusRank(b.status) || (a.title || '').localeCompare(b.title || ''),
-    sub: x => [x.area, x.target && 'target ' + x.target].filter(Boolean).join(' · '),
+    sub: (x, ctx) => [x.area, x.target && 'target ' + x.target, ctx && ctx.activity && ctx.activity(x)].filter(Boolean).join(' · '),
     badge: x => x.status,
     progress: x => Number(x.progress) || 0,
     fields: [

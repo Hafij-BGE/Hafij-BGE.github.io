@@ -1,9 +1,11 @@
-import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN, APP_FOLDERS } from './schema.js';
+import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN, APP_FOLDERS, APP_GROUPS, appGroup } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup, MAX_FILE } from './store.js';
 import {
   prettyFolder, lastPart, parentOf, cleanName, fmtSize, extOf, fileKind, viewable, folderSet, childFolders,
   inFolder, underFolder, mdToHtml, buildZip, mapFolderUpload,
 } from './files.js';
+import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
+import { loadRepos, cachedRepos, repoFor, ago, GH_USER } from './github.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
 
@@ -37,7 +39,10 @@ const ui = { showDone: false, filters: {} };
 
 const app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ctx = { projectName: id => (id && byId[id] ? byId[id].title : ''), title: id => (id && byId[id] ? byId[id].title : '') };
+const ctx = {
+  projectName: id => (id && byId[id] ? byId[id].title : ''), title: id => (id && byId[id] ? byId[id].title : ''),
+  activity: x => { const r = repoFor(x, (cachedRepos() || {}).repos); return r ? 'GitHub ' + ago(r.pushed) : ''; },
+};
 const today = () => new Date().toISOString().slice(0, 10);
 
 /* ---------------- icons ---------------- */
@@ -69,6 +74,9 @@ const I = {
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   zip: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M11 6h1M11 9h1M11 12h1v3h-1z"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  github: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>',
   person: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
@@ -107,7 +115,7 @@ addEventListener('hashchange', () => { openEditorFromRoute(); render(); });
 /* ---------------- boot ---------------- */
 function boot() {
   store = hasCfg ? new CloudStore(cfg) : new LocalStore();
-  store.on('auth', u => { user = u; authKnown = true; if (!u) items = []; render(); });
+  store.on('auth', u => { user = u; authKnown = true; if (!u) items = []; render(); if (u && store.mode === 'cloud') loadSharing(); });
   store.on('items', list => {
     items = list; byId = Object.fromEntries(list.map(x => [x.id, x]));
     if (editor) {
@@ -121,7 +129,9 @@ function boot() {
     render();
   });
   store.on('files', list => { files = list; if (!editor) render(); });
-  store.on('status', s => { status = s; renderStatus(); if (s === 'synced' || s === 'local') checkClaudeUpdates(); });
+  store.on('status', s => { status = s; renderStatus(); if (s === 'synced' || s === 'local') checkClaudeUpdates(); if (s === 'synced') schedulePublish(); });
+  store.on('items', () => schedulePublish());
+  loadRepos().then(() => { if (!editor && authKnown && user) render(); }).catch(() => {});
   store.on('error', msg => toast(msg, true));
   store.on('denied', () => {
     alert('This Google account is not allowed to open this Research Log. You will be signed out.');
@@ -263,6 +273,8 @@ function homeHTML() {
   <div class="grid2">
     <section class="card">
       <h3>PhD applications</h3>
+      ${of('application').length ? `<p class="groupline">${APP_GROUPS.map(g => [g, of('application').filter(x => appGroup(x) === g.id).length]).filter(([, n]) => n)
+        .map(([g, n]) => `<a class="chip g-${g.id}" href="#/phd/application" data-group="${g.id}"><i></i>${n} ${g.label.toLowerCase()}</a>`).join('')}</p>` : ''}
       ${apps.length ? `<ul class="rows">${apps.map(rowHTML).join('')}</ul>` : `<p class="muted">No open applications yet.</p>`}
       <a class="more" href="#/phd">PhD Control Center</a>
     </section>
@@ -281,6 +293,7 @@ function homeHTML() {
       ${recent.length ? `<ul class="rows">${recent.map(rowHTML).join('')}</ul>` : `<p class="muted">No experiments recorded yet.</p>`}
       <a class="more" href="#/lab/experiment">Lab notebook</a>
     </section>
+    ${githubCardHTML()}
     <section class="card">
       <h3>Stock alerts</h3>
       ${expiring.length ? `<ul class="rows">${expiring.map(rowHTML).join('')}</ul>` : `<p class="muted">Nothing expired or expiring within 30 days.</p>`}
@@ -313,9 +326,24 @@ function sectionHTML(r) {
     ${r.kind === 'application' && canPickFolder ? `<label class="btn">${icon('folder')} Import application folder<input type="file" data-act="importfolder" webkitdirectory multiple hidden></label>` : ''}
     ${r.kind === 'task' ? `<label class="toggle"><input type="checkbox" data-act="showdone" ${ui.showDone ? 'checked' : ''}> Show done (${doneCount})</label>` : ''}
   </div>
-  ${list.length ? `<ul class="rows big">${list.map(rowHTML).join('')}</ul>`
+  ${r.kind === 'application' && list.length ? appGroupsHTML(list)
+    : list.length ? `<ul class="rows big">${list.map(rowHTML).join('')}</ul>`
     : `<div class="empty">${icon(r.section.id)}<p>${f ? 'No matches.' : `No ${K.plural.toLowerCase()} yet.`}</p>
        ${f ? '' : `<a class="btn primary" href="#/${r.section.id}/${r.kind}/new">${icon('plus')} Add ${K.label.toLowerCase()}</a>`}</div>`}`;
+}
+
+function appGroupsHTML(list) {
+  const sel = ui.appGroup || 'all';
+  const groups = APP_GROUPS.map(g => ({ ...g, list: list.filter(x => appGroup(x) === g.id) }));
+  const chips = `<div class="chips" role="group" aria-label="Show applications">
+    <button type="button" class="chip ${sel === 'all' ? 'on' : ''}" data-act="appgroup" data-g="all" aria-pressed="${sel === 'all'}">All <span>${list.length}</span></button>
+    ${groups.map(g => `<button type="button" class="chip g-${g.id} ${sel === g.id ? 'on' : ''}" data-act="appgroup" data-g="${g.id}" aria-pressed="${sel === g.id}"><i></i>${g.label} <span>${g.list.length}</span></button>`).join('')}
+  </div>`;
+  const shown = groups.filter(g => sel === g.id || (sel === 'all' && g.list.length));
+  return chips + shown.map(g => `<section class="appgroup g-${g.id}">
+    <h3 class="grouph"><i></i>${g.label} <span>${g.list.length}</span> <small>${g.hint}</small></h3>
+    ${g.list.length ? `<ul class="rows big">${g.list.map(rowHTML).join('')}</ul>` : `<p class="muted pad">No ${g.label.toLowerCase()} applications.</p>`}
+  </section>`).join('');
 }
 
 function sectionOf(kind) { return SECTIONS.find(s => s.kinds.includes(kind)).id; }
@@ -354,6 +382,7 @@ function rowHTML(x, _i, _all, hrefOverride) {
       ${K.progress ? `<span class="bar"><i style="width:${Math.min(100, K.progress(x))}%"></i></span>` : ''}
     </a>
     <span class="tail">
+      ${x.noShare ? `<span class="pc" title="Private: never on shared links or the website">${icon('lock')}</span>` : ''}
       ${nfiles ? `<span class="pc" title="${nfiles} file${nfiles > 1 ? 's' : ''}">${icon('file')}${nfiles}</span>` : ''}
       ${photos ? `<span class="pc" title="${photos} photo${photos > 1 ? 's' : ''}">${icon('img')}${photos}</span>` : ''}
       ${warn ? `<span class="badge r">${esc(warn)}</span>` : badge ? `<span class="badge ${badgeClass(badge)}">${esc(badge)}</span>` : ''}
@@ -815,6 +844,162 @@ app.addEventListener('drop', e => {
   queueUpload(r.ws, list);
 });
 
+/* ---------------- read-only links & the website feed ----------------
+   Settings live in the owner's private meta/sharing. Whenever the log changes (and is fully synced),
+   each link's snapshot is re-encrypted and written to shares/{id}; the website feed to public/site. */
+let sharing = null, shareState = '', publishTimer = null;
+const lastSent = {};
+const defaultSharing = () => ({ links: [], site: { enabled: true, kinds: [...SITE_KINDS], inProgress: false } });
+async function loadSharing() {
+  try { sharing = { ...defaultSharing(), ...((await store.getMeta('sharing')) || {}) }; }
+  catch (e) { sharing = defaultSharing(); }
+  if (route().view === 'settings') renderShareCard();
+  schedulePublish();
+}
+async function saveSharing() { await store.setMeta('sharing', sharing); renderShareCard(); }
+function schedulePublish(delay = 4000) {
+  if (store.mode !== 'cloud' || !user || !sharing) return;
+  clearTimeout(publishTimer);
+  publishTimer = setTimeout(publishAll, delay);
+}
+async function publishAll() {
+  // Only from a complete, server-confirmed copy of the log, so a half-loaded device never blanks a link or the website.
+  if (store.mode !== 'cloud' || !user || !sharing || status !== 'synced' || !items.length) return;
+  const name = user.name || '';
+  let failed = '';
+  for (const l of sharing.links) {
+    const payload = { name, kinds: l.kinds, items: snapshot(items, l) };
+    const json = JSON.stringify(payload);
+    if (lastSent[l.id] === json) continue;
+    try {
+      const sealed = await seal(l, { ...payload, generatedAt: Date.now() });
+      if (sealed.data.length > 950000) { failed = 'toolarge'; continue; }
+      await store.setShare(l.id, sealed);
+      lastSent[l.id] = json; l.published = Date.now();
+    } catch (e) { failed = e && e.code === 'permission-denied' ? 'rules' : 'error'; }
+  }
+  const site = sharing.site || defaultSharing().site;
+  const sitePayload = { name, items: site.enabled ? snapshot(items, site, { site: true }) : [], inProgress: !!site.inProgress, off: !site.enabled };
+  const sjson = JSON.stringify(sitePayload);
+  if (lastSent.__site !== sjson) {
+    try { await store.setSite({ json: JSON.stringify({ ...sitePayload, generatedAt: Date.now() }) }); lastSent.__site = sjson; site.published = Date.now(); }
+    catch (e) { failed = e && e.code === 'permission-denied' ? 'rules' : (failed || 'error'); }
+  }
+  shareState = failed;
+  if (route().view === 'settings') renderShareCard();
+}
+
+const kindChecks = (name, chosen, kinds) => SECTIONS.map(sec => {
+  const ks = sec.kinds.filter(k => !kinds || kinds.includes(k));
+  if (!ks.length) return '';
+  return `<div class="kgroup"><b>${esc(sec.label)}</b>${ks.map(k => `<label class="checkopt"><input type="checkbox" name="${name}" value="${k}" ${chosen.includes(k) ? 'checked' : ''}>
+    ${esc(KINDS[k].plural)} <span class="muted small">${items.filter(x => x.kind === k && !x.noShare).length}</span></label>`).join('')}</div>`;
+}).join('');
+
+function sharingHTML() { return `<section class="card" id="shareCard">${shareCardInner()}</section>`; }
+function renderShareCard() { const el = app.querySelector('#shareCard'); if (el) el.innerHTML = shareCardInner(); }
+function shareCardInner() {
+  if (store.mode !== 'cloud') return `<h3>Read-only links &amp; website</h3><p class="muted">Sign in with Google to share.</p>`;
+  if (!sharing) return `<h3>Read-only links &amp; website</h3><p class="small muted">Loading…</p>`;
+  const warn = shareState === 'rules' ? `<p class="banner warn"><b>One step left:</b> paste the updated Firebase rules (from your Claude chat) so links and the website can be updated. Until then, nothing is shared.</p>`
+    : shareState === 'toolarge' ? `<p class="banner warn">One link holds too much. Tick fewer record types for it.</p>`
+    : shareState === 'error' ? `<p class="banner warn">Sharing could not be updated just now; it retries when you next change something.</p>` : '';
+  const site = sharing.site || defaultSharing().site;
+  return `<h3>${icon('link')} Read-only links</h3>
+    <p class="muted">Send someone a secret link to view chosen parts of your log — no sign-in, no editing, no files or photos. It stays up to date whenever you use the app, and you can turn it off any time.</p>
+    ${warn}
+    ${sharing.links.length ? `<ul class="rows links">${sharing.links.map(l => `<li class="row">
+      <span class="dot" style="--c:var(--dry)"></span>
+      <span class="rowmain"><span class="t">${esc(l.name || 'Read-only link')}</span>
+        <span class="s">${esc(l.kinds.map(k => KINDS[k] ? KINDS[k].plural : k).join(', '))}${l.hideNotes ? ' · notes hidden' : ''}</span></span>
+      <span class="tail">
+        <button type="button" class="btn sm" data-act="link-copy" data-id="${l.id}">${icon('copy')} Copy</button>
+        <a class="iconbtn sm" href="${esc(linkUrl(l))}" target="_blank" rel="noopener" aria-label="Open as a viewer">${icon('ext')}</a>
+        <button type="button" class="iconbtn sm" data-act="link-edit" data-id="${l.id}" aria-label="Change what this link shows">${icon('edit')}</button>
+        <button type="button" class="iconbtn sm" data-act="link-off" data-id="${l.id}" aria-label="Turn this link off">${icon('trash')}</button>
+      </span></li>`).join('')}</ul>` : ''}
+    <div class="btnrow"><button type="button" class="btn primary" data-act="link-new">${icon('plus')} New read-only link</button></div>
+    <h3 style="margin-top:22px">${icon('ext')} My website</h3>
+    <p class="muted">Show records from this log on <a href="../" target="_blank" rel="noopener">hafij-bge.github.io</a> automatically. Notes, emails and records marked Private are never shown.</p>
+    <label class="toggle big nopad"><input type="checkbox" data-act="site-on" ${site.enabled ? 'checked' : ''}> Update my website from this log</label>
+    <div class="checks" ${site.enabled ? '' : 'hidden'}>${SITE_KINDS.map(k => `<label class="checkopt"><input type="checkbox" data-act="site-kind" value="${k}" ${site.kinds.includes(k) ? 'checked' : ''}> ${esc(KINDS[k].plural)}</label>`).join('')}</div>
+    <label class="toggle nopad" ${site.enabled && site.kinds.includes('publication') ? '' : 'hidden'}><input type="checkbox" data-act="site-inprog" ${site.inProgress ? 'checked' : ''}> Also list manuscripts in progress (title and stage only)</label>
+    <p class="small muted">Publications appear once Published or Accepted; projects while Active or Done. ${site.published ? `Last updated ${new Date(site.published).toLocaleString()}.` : ''}</p>`;
+}
+
+function linkEditor(l) {
+  const isNew = !l;
+  const chosen = l ? l.kinds : ['publication', 'talk', 'award', 'project'];
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>${isNew ? 'New read-only link' : 'Change link'}</h2><button type="button" class="btn primary" data-save>${isNew ? 'Create link' : 'Save'}</button></div>
+    <div class="ovl-body"><div class="fields">
+      <div class="fld"><label for="ln_name">Name (only you see it)</label><input id="ln_name" type="text" value="${esc(l ? l.name : '')}" placeholder="e.g. For Prof. Müller"></div>
+      <div class="fld"><label>What the viewer can see</label><div class="kgroups">${kindChecks('ln_kind', chosen)}</div></div>
+      <div class="fld"><label class="toggle big nopad"><input type="checkbox" id="ln_hide" ${!l || l.hideNotes ? 'checked' : ''}> Hide personal notes and contact details (notes, emails, “why this lab”)</label></div>
+      <p class="small muted">Files and photos are never shared. Records you mark <b>Private</b> never appear. The link itself is the key — anyone who has it can view, so send it only to the people you mean.</p>
+    </div></div>`);
+  el.querySelector('[data-save]').onclick = async () => {
+    const kinds = [...el.querySelectorAll('input[name=ln_kind]:checked')].map(i => i.value);
+    if (!kinds.length) return toast('Tick at least one thing to show.', true);
+    const name = el.querySelector('#ln_name').value.trim() || 'Read-only link';
+    const hideNotes = el.querySelector('#ln_hide').checked;
+    let link = l;
+    if (isNew) { link = { ...newLink(name), kinds, hideNotes }; sharing.links.push(link); }
+    else Object.assign(link, { name, kinds, hideNotes });
+    delete lastSent[link.id];
+    el._close();
+    try { await saveSharing(); } catch (e) { return toast('Could not save the link settings.', true); }
+    await publishAll();
+    if (shareState === 'rules') return toast('Link saved. Paste the updated Firebase rules to switch it on.', true);
+    if (isNew) copyLink(link); else toast('Link updated');
+  };
+}
+async function copyLink(l) {
+  if (!l) return;
+  try { await navigator.clipboard.writeText(linkUrl(l)); toast('Link copied — send it only to the people you mean'); }
+  catch (e) { prompt('Copy this link:', linkUrl(l)); }
+}
+async function removeLink(id) {
+  const l = sharing.links.find(x => x.id === id);
+  if (!l || !confirm(`Turn off “${l.name}”? Anyone with this link will no longer see anything.`)) return;
+  sharing.links = sharing.links.filter(x => x.id !== id);
+  delete lastSent[id];
+  try { await store.deleteShare(id); } catch (e) {}
+  await saveSharing();
+  toast('Link turned off');
+}
+async function siteSetting(t) {
+  const site = sharing.site = sharing.site || defaultSharing().site;
+  if (t.dataset.act === 'site-on') site.enabled = t.checked;
+  if (t.dataset.act === 'site-inprog') site.inProgress = t.checked;
+  if (t.dataset.act === 'site-kind') site.kinds = t.checked ? [...new Set([...site.kinds, t.value])] : site.kinds.filter(k => k !== t.value);
+  await saveSharing();
+  publishAll();
+}
+
+/* ---------------- GitHub ---------------- */
+function githubCardHTML() {
+  const c = cachedRepos();
+  const projects = items.filter(x => x.kind === 'project');
+  const linked = r => projects.some(p => repoFor(p, [r]));
+  const repos = c ? c.repos.filter(r => r.name.toLowerCase() !== GH_USER.toLowerCase() && !/\.github\.io$/i.test(r.name)).slice(0, 5) : null;
+  return `<section class="card">
+    <h3>GitHub activity</h3>
+    ${repos ? (repos.length ? `<ul class="rows">${repos.map(r => `<li class="row"><span class="dot" style="--c:var(--dry)"></span>
+      <a class="rowmain" href="${esc(r.url)}" target="_blank" rel="noopener"><span class="t">${esc(r.name)}</span>
+        <span class="s">${esc([r.language, 'updated ' + ago(r.pushed)].filter(Boolean).join(' · '))}</span></a>
+      <span class="tail">${linked(r) ? `<span class="badge g">In log</span>` : `<button type="button" class="btn sm" data-act="ghadd" data-repo="${esc(r.name)}">${icon('plus')} Project</button>`}</span></li>`).join('')}</ul>`
+      : `<p class="muted">No public repositories yet.</p>`) : `<p class="muted">Checking GitHub…</p>`}
+    <a class="more" href="https://github.com/${GH_USER}" target="_blank" rel="noopener">Your GitHub</a>
+  </section>`;
+}
+function addRepoAsProject(name) {
+  const r = ((cachedRepos() || {}).repos || []).find(x => x.name === name);
+  if (!r) return;
+  store.save({ kind: 'project', title: r.name, status: 'Active', area: 'Computational', progress: 0, links: r.url, description: r.description || '', createdAt: Date.now() });
+  toast(`Added ${r.name} to your projects`);
+}
+
 /* ---------------- search ---------------- */
 function searchHTML() {
   return `<div class="toolbar"><input id="q" class="filter" type="search" placeholder="Search everything — experiments, protocols, papers…" value="${esc(ui.q || '')}" aria-label="Search"></div>
@@ -876,6 +1061,7 @@ function settingsHTML() {
     </div>
     <p class="small muted">On Android, open this page in Chrome and choose <b>⋮ → Add to Home screen</b>, or install your private Android app.</p>
   </section>
+  ${sharingHTML()}
   <section class="card" id="claudeAuto">
     <h3>Let Claude add data for you</h3>
     <p class="muted">Give Claude your code once; it can then add or update your records directly. Updates reach your app encrypted, and only your signed-in app can unlock them.</p>
@@ -982,7 +1168,8 @@ function editorHTML() {
       <button type="submit" class="btn primary">Save</button>
     </header>
     <div class="sheet-body">
-      <div class="fields">${K.fields.map(f => fieldHTML(f, item)).join('')}</div>
+      <div class="fields">${K.fields.map(f => fieldHTML(f, item)).join('')}
+        <div class="fld"><label class="toggle privtoggle"><input type="checkbox" name="noShare" ${item.noShare ? 'checked' : ''}> ${icon('lock')} Private — never show on read-only links or the website</label></div></div>
       ${isNew ? '' : `<div class="sheet-foot">
         ${['experiment', 'protocol'].includes(kind) ? `<button type="button" class="btn" data-act="duplicate">${icon('copy')} Duplicate</button>` : ''}
         ${K.calendar && K.calendar(item) ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(K.calendar(item)))}">${icon('cal')} Add to Google Calendar</a>` : ''}
@@ -1011,6 +1198,7 @@ function readForm() {
   const form = app.querySelector('#edform');
   const K = KINDS[editor.kind];
   const out = { ...editor.item };
+  out.noShare = form.elements.noShare && form.elements.noShare.checked ? true : undefined;
   K.fields.forEach(f => {
     if (f.type === 'photos') return;
     const el = form.elements[f.key];
@@ -1082,6 +1270,13 @@ app.addEventListener('click', async e => {
       break;
     }
     case 'showdone': ui.showDone = t.checked; render(); break;
+    case 'appgroup': ui.appGroup = t.dataset.g; render(); break;
+    case 'ghadd': addRepoAsProject(t.dataset.repo); break;
+    case 'link-new': linkEditor(null); break;
+    case 'link-edit': linkEditor(sharing.links.find(l => l.id === t.dataset.id)); break;
+    case 'link-copy': copyLink(sharing.links.find(l => l.id === t.dataset.id)); break;
+    case 'link-off': removeLink(t.dataset.id); break;
+    case 'site-on': case 'site-kind': case 'site-inprog': siteSetting(t); break;
     case 'cancel':
       e.preventDefault();
       if (editor && editor.dirty && !confirm('Discard your changes?')) return;
@@ -1191,7 +1386,10 @@ app.addEventListener('click', async e => {
   }
 });
 
-app.addEventListener('click', e => { const a = e.target.closest('a[data-scroll]'); if (a) ui.scrollTo = a.dataset.scroll; }, true);
+app.addEventListener('click', e => {
+  const a = e.target.closest('a[data-scroll]'); if (a) ui.scrollTo = a.dataset.scroll;
+  const g = e.target.closest('a[data-group]'); if (g) ui.appGroup = g.dataset.group;
+}, true);
 
 app.addEventListener('change', async e => {
   const t = e.target;

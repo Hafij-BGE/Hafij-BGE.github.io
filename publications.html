@@ -38,7 +38,7 @@
 
   <section class="section">
     <h2>Peer-reviewed articles</h2>
-    <ol class="dated">
+    <ol class="dated" data-live="articles">
       <li>
         <span class="yr">2023</span>
         <div>
@@ -65,7 +65,7 @@
 
   <section class="section">
     <h2>Presentations</h2>
-    <ul class="dated">
+    <ul class="dated" data-live="talks">
       <li>
         <span class="yr">2025</span>
         <div>
@@ -81,6 +81,11 @@
         </div>
       </li>
     </ul>
+  </section>
+
+  <section class="section" data-live-wrap="inprogress" hidden>
+    <h2>Manuscripts in progress</h2>
+    <ul class="dated" data-live="inprogress"></ul>
   </section>
 
   <section class="section">
@@ -104,6 +109,7 @@
 </div></footer>
 
 <script src="app.js"></script>
+<script src="live.js" defer></script>
 <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 </body>
 </html>
