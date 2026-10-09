@@ -250,3 +250,4 @@ code { font: .9em ui-monospace, Menlo, Consolas, monospace; }
 .steps-plain li { margin-bottom: 4px; }
 .grid2 > * { min-width: 0; }
 .card { min-width: 0; }
+.codebox { font: 600 1.05rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; padding: 12px 14px; margin: 6px 0 10px; border-radius: 10px; border: 1px dashed var(--dry); background: color-mix(in srgb, var(--dry) 7%, transparent); word-break: break-all; user-select: all; }

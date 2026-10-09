@@ -131,6 +131,12 @@ export class CloudStore extends Emitter {
     return s.exists() ? s.data().data : null;
   }
   removePhoto(id) { deleteDoc(doc(this.col('photos'), id)).catch(() => {}); }
+  // Small private settings documents in the owner's account (e.g. the Claude updates code).
+  async getMeta(name) {
+    const snap = await getDoc(doc(this.db, 'users', this.user.uid, 'meta', name));
+    return snap.exists() ? snap.data() : null;
+  }
+  setMeta(name, data) { return setDoc(doc(this.db, 'users', this.user.uid, 'meta', name), clean(data)); }
   async bulkSave(items) {
     for (let i = 0; i < items.length; i += 400) {
       const b = writeBatch(this.db);
@@ -182,6 +188,8 @@ export class LocalStore extends Emitter {
   }
   async getPhoto(id) { try { return localStorage.getItem('rl.photo.' + id); } catch (e) { return null; } }
   removePhoto(id) { try { localStorage.removeItem('rl.photo.' + id); } catch (e) {} }
+  async getMeta(name) { try { return JSON.parse(localStorage.getItem('rl.meta.' + name) || 'null'); } catch (e) { return null; } }
+  async setMeta(name, data) { try { localStorage.setItem('rl.meta.' + name, JSON.stringify(data)); } catch (e) {} }
   async bulkSave(items) {
     items.forEach(it => { const { id, ...d } = it; this.items[id || newId()] = clean({ ...d, updatedAt: Date.now() }); });
     this.flush();

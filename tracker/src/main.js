@@ -90,7 +90,7 @@ function boot() {
     }
     render();
   });
-  store.on('status', s => { status = s; renderStatus(); });
+  store.on('status', s => { status = s; renderStatus(); if (s === 'synced' || s === 'local') checkClaudeUpdates(); });
   store.on('error', msg => toast(msg, true));
   store.on('denied', () => {
     alert('This Google account is not allowed to open this Research Log. You will be signed out.');
@@ -121,7 +121,7 @@ function render() {
   let html = '';
   if (r.section) html = sectionHTML(r);
   else if (r.view === 'search') html = searchHTML();
-  else if (r.view === 'settings') html = settingsHTML();
+  else if (r.view === 'settings') { html = settingsHTML(); setTimeout(renderClaudeCard, 0); }
   else html = homeHTML();
   view.innerHTML = html;
   view.scrollTop = 0;
@@ -369,6 +369,11 @@ function settingsHTML() {
     </div>
     <p class="small muted">On Android, open this page in Chrome and choose <b>⋮ → Add to Home screen</b>, or install your private Android app.</p>
   </section>
+  <section class="card" id="claudeAuto">
+    <h3>Let Claude add data for you</h3>
+    <p class="muted">Give Claude your code once; it can then add or update your records directly. Updates reach your app encrypted, and only your signed-in app can unlock them.</p>
+    <div id="claudeUpd"><p class="small muted">Loading…</p></div>
+  </section>
   <section class="card" id="claude">
     <h3>Add data with Claude</h3>
     <p class="muted">Works from any Claude chat or account, and you approve every change.</p>
@@ -600,6 +605,22 @@ app.addEventListener('click', async e => {
       if (deferredInstall) { deferredInstall.prompt(); deferredInstall = null; }
       break;
     case 'export': exportData(); break;
+    case 'upd-create': case 'upd-replace': {
+      if (act === 'upd-replace' && !confirm('Replace your code? Claude will no longer be able to add data until you give it the new code.')) return;
+      const meta = (await store.getMeta('claude')) || {};
+      await store.setMeta('claude', { ...meta, code: newUpdateCode(), created: Date.now() });
+      ui.showCode = true; renderClaudeCard(); toast(act === 'upd-create' ? 'Code created — copy it to Claude' : 'New code created; the old one no longer works');
+      break;
+    }
+    case 'upd-show': ui.showCode = !ui.showCode; renderClaudeCard(); break;
+    case 'upd-copy': {
+      const meta = await store.getMeta('claude');
+      try { await navigator.clipboard.writeText(meta.code); toast('Code copied — paste it to Claude in your chat'); }
+      catch (e) { ui.showCode = true; renderClaudeCard(); toast('Copy blocked; select the code and copy it by hand.', true); }
+      break;
+    }
+    case 'upd-check': checkClaudeUpdates(true); break;
+    case 'upd-undo': undoClaudeUpdate(); break;
     case 'copyprompt':
       try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('Instructions copied — paste them into a Claude chat'); }
       catch (e) { toast('Copying was blocked by the browser.', true); }
@@ -774,6 +795,90 @@ async function runImport(json) {
 async function importData(file) {
   try { await runImport(JSON.parse(await file.text())); }
   catch (err) { toast('That file could not be read as a Research Log export.', true); }
+}
+
+/* ---------------- Updates from Claude (owner-authorised) ----------------
+   The owner creates a private code in Settings and gives it to Claude. Claude places updates on
+   this website encrypted with that code (AES-256-GCM, key via PBKDF2-SHA256); only an app signed
+   in to the owner's account holds the code, so only it can unlock them. Updates can add records
+   or change fields — never delete — and the last update can be undone. Replacing the code revokes. */
+const b64d = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function unlockUpdate(code, f) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64d(f.salt), iterations: f.iter || 200000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(f.iv) }, key, b64d(f.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function newUpdateCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(r, b => A[b % 32]).join('').match(/.{6}/g).join('-');
+}
+let updBusy = false, updChecked = false;
+async function checkClaudeUpdates(manual) {
+  if (updBusy || !user || (updChecked && !manual)) return;
+  updBusy = true;
+  try {
+    const meta = await store.getMeta('claude');
+    if (!meta || !meta.code) { if (manual) toast('Create a code first.', true); return; }
+    const res = await fetch('updates/index.json', { cache: 'no-store' });
+    if (!res.ok) { if (manual) toast('No updates from Claude yet.'); return; }
+    const done = [...(meta.done || [])];
+    const pending = ((await res.json()).files || []).filter(id => !done.includes(id));
+    const undo = { added: [], previous: [], at: Date.now() };
+    let added = 0, changed = 0, failed = 0;
+    for (const id of pending) {
+      try {
+        const f = await (await fetch(`updates/${encodeURIComponent(id)}.json`, { cache: 'no-store' })).json();
+        const payload = await unlockUpdate(meta.code, f);
+        const plan = mergePlan((payload.items || []).map(({ _delete, ...x }) => x));   // never delete
+        plan.out.forEach(r => { if (byId[r.id]) undo.previous.push(byId[r.id]); else undo.added.push(r.id); });
+        if (plan.out.length) await store.bulkSave(plan.out);
+        added += plan.added; changed += plan.completed + plan.updated;
+        done.push(id);
+      } catch (e) { failed++; }
+    }
+    updChecked = true;
+    if (done.length !== (meta.done || []).length) {
+      const log = [...(meta.log || []), { at: Date.now(), added, changed }].slice(-20);
+      await store.setMeta('claude', { ...meta, done, log, undo: (added || changed) ? undo : meta.undo || null });
+    }
+    if (added || changed) toast(`Claude's update added ${added} and updated ${changed} records`);
+    else if (failed) toast(`An update from Claude could not be unlocked with your current code.`, true);
+    else if (manual) toast('You are up to date.');
+    if (route().view === 'settings') renderClaudeCard();
+  } catch (e) { if (manual) toast('Could not check for updates right now.', true); }
+  finally { updBusy = false; }
+}
+async function undoClaudeUpdate() {
+  const meta = await store.getMeta('claude');
+  const u = meta && meta.undo;
+  if (!u) return toast('Nothing to undo.');
+  if (!confirm(`Undo Claude's last update? This removes ${u.added.length} added record(s) and restores ${u.previous.length} changed one(s).`)) return;
+  u.added.forEach(id => { if (byId[id]) store.remove(id); });
+  if (u.previous.length) await store.bulkSave(u.previous);
+  await store.setMeta('claude', { ...meta, undo: null });
+  toast('Claude\'s last update was undone'); renderClaudeCard();
+}
+async function renderClaudeCard() {
+  const box = app.querySelector('#claudeUpd');
+  if (!box) return;
+  const meta = await store.getMeta('claude').catch(() => null);
+  if (!meta || !meta.code) {
+    box.innerHTML = `<div class="btnrow"><button class="btn primary" data-act="upd-create">Create code for Claude</button></div>`;
+    return;
+  }
+  const last = (meta.log || []).slice(-1)[0];
+  box.innerHTML = `${ui.showCode ? `<div class="codebox">${esc(meta.code)}</div>` : ''}
+    <div class="btnrow">
+      <button class="btn primary" data-act="upd-copy">${icon('copy')} Copy code</button>
+      <button class="btn" data-act="upd-show">${ui.showCode ? 'Hide code' : 'Show code'}</button>
+      <button class="btn" data-act="upd-check">Check now</button>
+      ${meta.undo ? `<button class="btn" data-act="upd-undo">Undo last update</button>` : ''}
+      <button class="btn danger" data-act="upd-replace">Replace code</button>
+    </div>
+    <p class="small muted">${last ? `Last update ${new Date(last.at).toLocaleString()}: ${last.added} added, ${last.changed} updated.` : 'No updates received yet.'}
+      Claude can add and update records but never delete. <b>Replace code</b> stops Claude immediately.</p>`;
 }
 
 function calLink({ date, title, details }) {
