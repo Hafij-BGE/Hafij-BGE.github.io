@@ -250,11 +250,19 @@
     ol.steps li:nth-child(3n)::after { display: none; }
   }
 
-  .techniques { display: grid; gap: 16px 32px; margin-top: 8px; }
-  @media (min-width: 620px) { .techniques { grid-template-columns: 1fr 1fr; } }
-  .techniques h4 { margin: 0 0 2px; font-size: 1rem; font-weight: 600; }
-  .techniques p { margin: 0; font-size: 1rem; color: var(--ink); }
-  .subhead { margin: 30px 0 4px; font-size: 1.15rem; font-weight: 600; }
+  .techgrid { display: grid; gap: 14px; margin-top: 10px; }
+  @media (min-width: 560px) { .techgrid { grid-template-columns: 1fr 1fr; } }
+  .techcard {
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--c);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--c) 6%, transparent);
+  }
+  .techcard h4 { margin: 0 0 8px; font-size: 1rem; font-weight: 600; color: var(--c); }
+  .techcard ul { margin: 0; padding-left: 1.05em; }
+  .techcard li { font-size: .98rem; margin-bottom: 3px; }
+  .subhead { margin: 30px 0 6px; font-size: 1.15rem; font-weight: 600; }
 
   footer { padding: 40px 0 56px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .95rem; }
 
@@ -379,13 +387,39 @@
       </article>
 
       <p class="subhead">Bench techniques</p>
-      <div class="techniques">
-        <div><h4>Virology</h4><p>Virus propagation in embryonated eggs, attenuation by serial passage, virus identification and confirmation</p></div>
-        <div><h4>Vaccines and immunology</h4><p>Vaccine formulation with adjuvant, vaccine trials in chickens, antibody analysis</p></div>
-        <div><h4>Molecular biology</h4><p>DNA and RNA extraction and quantification, general molecular biology techniques</p></div>
-        <div><h4>Microbiology</h4><p>Microbial culture and biochemical testing</p></div>
-        <div><h4><i>In vitro</i> studies</h4><p>Bioactivity testing of plant extracts</p></div>
-        <div><h4>Diagnostics</h4><p>CRISPR–microfluidic pathogen detection</p></div>
+      <div class="techgrid">
+        <div class="techcard" style="--c:#2563EB">
+          <h4>Molecular biology</h4>
+          <ul><li>PCR &amp; PCR-product purification</li><li>DNA/RNA extraction</li><li>DNA isolation &amp; quantification</li><li>Restriction digestion</li><li>Agarose gel electrophoresis</li></ul>
+        </div>
+        <div class="techcard" style="--c:#0E9F6E">
+          <h4>Microbiology &amp; antimicrobial</h4>
+          <ul><li>Microbial cell culture</li><li>Morphological &amp; biochemical assays</li><li>Cell counting</li><li>Antibiotic potency assay</li><li>Disc diffusion screening</li><li>Serial dilution (MIC)</li></ul>
+        </div>
+        <div class="techcard" style="--c:#7C3AED">
+          <h4>Immunoassays</h4>
+          <ul><li>ELISA</li><li>Hepatitis-B detection (kit)</li></ul>
+        </div>
+        <div class="techcard" style="--c:#DC2626">
+          <h4>Virology &amp; vaccines</h4>
+          <ul><li>Viral replication in chick embryo</li><li>Attenuation by serial passage</li><li>Vaccine formulation with adjuvant</li><li>Vaccine trials in chickens</li><li>Antibody analysis</li></ul>
+        </div>
+        <div class="techcard" style="--c:#EA580C">
+          <h4>Biochemistry</h4>
+          <ul><li>Carbohydrate tests (Molisch, Benedict)</li><li>Protein tests (Ninhydrin, Biuret)</li><li>Sugar assay (Nelson–Somogyi)</li></ul>
+        </div>
+        <div class="techcard" style="--c:#0891B2">
+          <h4>Water &amp; environmental</h4>
+          <ul><li>Physicochemical: pH, turbidity, BOD, DO</li><li>Membrane-filtration bacteriology</li></ul>
+        </div>
+        <div class="techcard" style="--c:#DB2777">
+          <h4>Chromatography &amp; separation</h4>
+          <ul><li>Ion-exchange column (resin)</li><li>Paper chromatography</li><li>Column chromatography</li></ul>
+        </div>
+        <div class="techcard" style="--c:#15803D">
+          <h4>Diagnostics &amp; <i>in vitro</i></h4>
+          <ul><li>CRISPR–microfluidic pathogen detection</li><li>Bioactivity testing of plant extracts</li></ul>
+        </div>
       </div>
     </div>
   </section>
