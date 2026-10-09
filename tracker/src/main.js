@@ -1,11 +1,11 @@
-import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN, APP_FOLDERS, APP_GROUPS, appGroup } from './schema.js';
+import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN, APP_FOLDERS, ART_FOLDERS, APP_GROUPS, appGroup } from './schema.js';
 import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup, MAX_FILE } from './store.js';
 import {
   prettyFolder, lastPart, parentOf, cleanName, fmtSize, extOf, fileKind, viewable, folderSet, childFolders,
   inFolder, underFolder, mdToHtml, buildZip, mapFolderUpload,
 } from './files.js';
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
-import { loadRepos, cachedRepos, repoFor, ago, GH_USER } from './github.js';
+import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
 
@@ -91,9 +91,10 @@ function route() {
     r.kind = sec.kinds.includes(p[1]) ? p[1] : sec.kinds[0];
     if (p[2] === 'new') r.edit = 'new';
     if (p[2] === 'edit' && p[3]) r.edit = p[3];
-    // An application's own folder: #/phd/application/open/<id>[/f/<folder>/<sub>…][/~e/<kind>/<id|new>]
-    if (r.kind === 'application' && p[2] === 'open' && p[3]) {
-      r.ws = p[3];
+    // A record's own folder (PhD applications, research articles):
+    // #/<section>/<kind>/open/<id>[/f/<folder>/<sub>…][/~e/<kind>/<id|new>]
+    if (WS[r.kind] && p[2] === 'open' && p[3]) {
+      r.ws = p[3]; r.wsKind = r.kind;
       let rest = p.slice(4);
       const ei = rest.indexOf('~e');
       if (ei >= 0) {
@@ -102,12 +103,28 @@ function route() {
         rest = rest.slice(0, ei);
       }
       r.folder = rest[0] === 'f' ? rest.slice(1).map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } }).join('/') : '';
-      r.base = wsHref(r.ws, r.folder);
+      r.base = wsHref(r.ws, r.folder, r.wsKind);
     }
   }
   return r;
 }
-const wsHref = (id, folder) => `#/phd/application/open/${id}` + (folder ? '/f/' + folder.split('/').map(encodeURIComponent).join('/') : '');
+// Record types that have their own folder of files.
+const WS = {
+  application: {
+    section: 'phd', title: 'PhD folder', list: '#/phd/application', listLabel: 'Applications', folders: APP_FOLDERS, noun: 'application',
+    zipRoot: 'PhD_Applications', importLabel: 'Import application folder', wholeLabel: 'Upload the whole application folder',
+    readmeHint: 'Write what this application needs — requirements, steps, contacts, interview prep. Checklists work too: <code>- [ ] Send CV</code>',
+    fresh: () => ({ status: 'Researching', documents: [] }),
+  },
+  article: {
+    section: 'research', title: 'Article folder', list: '#/research/article', listLabel: 'Articles', folders: ART_FOLDERS, noun: 'article',
+    zipRoot: 'Research_Articles', importLabel: 'Import article folder', wholeLabel: 'Upload the whole article folder',
+    readmeHint: 'Plan the article — aim, key results, figure list, what is left to do. Checklists work too: <code>- [ ] Figure 2</code>',
+    fresh: () => ({ status: 'Drafting', progress: 0 }),
+  },
+};
+const kindOf = id => (byId[id] && byId[id].kind) || (pendingOpen && pendingOpen.id === id && pendingOpen.kind) || 'application';
+const wsHref = (id, folder, kind) => `#/${WS[kind || kindOf(id)].section}/${kind || kindOf(id)}/open/${id}` + (folder ? '/f/' + folder.split('/').map(encodeURIComponent).join('/') : '');
 const listHref = r => r.base || `#/${r.section.id}/${r.kind}`;
 const go = h => { if (location.hash !== h) location.hash = h; else render(); };
 addEventListener('hashchange', () => { openEditorFromRoute(); render(); });
@@ -192,7 +209,7 @@ function renderChrome() {
   const r = route();
   app.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === (r.section ? r.section.id : r.view)));
   const titles = { home: 'Research Log', search: 'Search', settings: 'Settings' };
-  app.querySelector('#title').textContent = r.ws ? 'PhD folder' : r.section ? r.section.label : titles[r.view] || 'Research Log';
+  app.querySelector('#title').textContent = r.ws ? WS[r.wsKind].title : r.section ? r.section.label : titles[r.view] || 'Research Log';
   renderStatus();
 }
 
@@ -262,7 +279,7 @@ function homeHTML() {
     <p>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
   </section>
   <div class="quick">
-    ${[['lab', 'experiment', 'Experiment'], ['research', 'task', 'Task'], ['phd', 'application', 'Application'], ['lab', 'inventory', 'Sample'], ['research', 'paper', 'Paper']]
+    ${[['lab', 'experiment', 'Experiment'], ['research', 'task', 'Task'], ['phd', 'application', 'Application'], ['research', 'article', 'Article'], ['lab', 'inventory', 'Sample'], ['research', 'paper', 'Paper']]
       .map(([s, k, l]) => `<a class="qbtn" href="#/${s}/${k}/new" style="--c:${KINDS[k].color}">${icon('plus')}${l}</a>`).join('')}
     <a class="qbtn" href="#/settings" data-scroll="claude" style="--c:var(--accent)">${icon('spark')}With Claude</a>
   </div>
@@ -323,7 +340,8 @@ function sectionHTML(r) {
   </div>
   <div class="toolbar">
     <input id="filter" class="filter" type="search" placeholder="Filter ${K.plural.toLowerCase()}…" value="${esc(ui.filters[r.kind] || '')}" aria-label="Filter">
-    ${r.kind === 'application' && canPickFolder ? `<label class="btn">${icon('folder')} Import application folder<input type="file" data-act="importfolder" webkitdirectory multiple hidden></label>` : ''}
+    ${WS[r.kind] && canPickFolder ? `<label class="btn">${icon('folder')} ${WS[r.kind].importLabel}<input type="file" data-act="importfolder" data-kind="${r.kind}" webkitdirectory multiple hidden></label>` : ''}
+    ${r.kind === 'article' ? `<button type="button" class="btn" data-act="ghpick" data-mode="new">${icon('github')} Add from GitHub</button>` : ''}
     ${r.kind === 'task' ? `<label class="toggle"><input type="checkbox" data-act="showdone" ${ui.showDone ? 'checked' : ''}> Show done (${doneCount})</label>` : ''}
   </div>
   ${r.kind === 'application' && list.length ? appGroupsHTML(list)
@@ -367,8 +385,8 @@ function linkOf(x) {
 
 function rowHTML(x, _i, _all, hrefOverride) {
   const K = KINDS[x.kind];
-  const href = hrefOverride || (x.kind === 'application' ? wsHref(x.id) : `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`);
-  const nfiles = x.kind === 'application' ? files.filter(f => f.app === x.id).length : 0;
+  const href = hrefOverride || (WS[x.kind] ? wsHref(x.id, '', x.kind) : `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`);
+  const nfiles = WS[x.kind] ? files.filter(f => f.app === x.id).length : 0;
   const badge = K.badge && K.badge(x);
   const warn = K.warn && K.warn(x);
   const overdue = x.kind === 'task' && !x.done && x.due && x.due < today();
@@ -396,9 +414,9 @@ function rowHTML(x, _i, _all, hrefOverride) {
    README.md plus 01_Program_Info, 02_My_Profile, 03_Professors, 04_Templates_General (renamable),
    with sub-folders and files of any type. Files live in the owner's own Firebase database. */
 const canPickFolder = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && 'webkitdirectory' in document.createElement('input');
-const appFolders = a => (Array.isArray(a.folders) ? a.folders : APP_FOLDERS);
+const appFolders = a => (Array.isArray(a.folders) ? a.folders : (WS[a.kind] || WS.application).folders);
 const zipRoot = a => cleanName(a.folderName || (a.title || 'Application').replace(/\s+/g, '_')) || 'Application';
-const isProfFolder = path => !!path && !path.includes('/') && /professor|supervisor|faculty|\bPIs?\b/i.test(path);
+const isProfFolder = (path, a) => a && a.kind === 'application' && !!path && !path.includes('/') && /professor|supervisor|faculty|\bPIs?\b/i.test(path);
 const filesOf = id => files.filter(f => f.app === id);
 const profsOf = id => items.filter(x => x.kind === 'professor' && x.application === id).sort(KINDS.professor.sort);
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -414,9 +432,10 @@ function folderTitle(name) {
 
 function workspaceHTML(r) {
   const a = byId[r.ws];
-  if (!a || a.kind !== 'application') {
-    return items.length ? `<div class="empty">${icon('phd')}<p>This application was not found. It may have been deleted on another device.</p>
-      <a class="btn" href="#/phd/application">Back to applications</a></div>` : '';
+  const W = WS[r.wsKind];
+  if (!a || a.kind !== r.wsKind) {
+    return items.length ? `<div class="empty">${icon('folder')}<p>This ${W.noun} was not found. It may have been deleted on another device.</p>
+      <a class="btn" href="${W.list}">Back to ${W.listLabel.toLowerCase()}</a></div>` : '';
   }
   const own = filesOf(a.id);
   const all = folderSet({ folders: appFolders(a) }, own);
@@ -425,16 +444,17 @@ function workspaceHTML(r) {
 
 function crumbsHTML(a, folder) {
   const parts = folder ? folder.split('/') : [];
-  const links = [`<a href="#/phd/application">${icon('back')}Applications</a>`];
-  if (folder) links.push(`<a href="${wsHref(a.id)}">${esc(a.folderName || a.title)}</a>`);
-  parts.slice(0, -1).forEach((p, i) => links.push(`<a href="${wsHref(a.id, parts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`));
+  const W = WS[a.kind];
+  const links = [`<a href="${W.list}">${icon('back')}${W.listLabel}</a>`];
+  if (folder) links.push(`<a href="${wsHref(a.id, '', a.kind)}">${esc(a.folderName || a.title)}</a>`);
+  parts.slice(0, -1).forEach((p, i) => links.push(`<a href="${wsHref(a.id, parts.slice(0, i + 1).join('/'), a.kind)}">${esc(p)}</a>`));
   return `<nav class="crumbs" aria-label="Folder path">${links.join('<span>/</span>')}</nav>`;
 }
 
 function tilesHTML(a, own, folders, extra = '') {
   return `<div class="tiles">${folders.map(path => {
     const n = underFolder(own, path).length;
-    const np = isProfFolder(path) ? profsOf(a.id).length : 0;
+    const np = isProfFolder(path, a) ? profsOf(a.id).length : 0;
     const sub = [n ? plural(n, 'file') : 'Empty', np ? `${np} professor${np > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
     return `<a class="tile" href="${wsHref(a.id, path)}" title="${esc(lastPart(path))}">
       <span class="tileic">${icon('folder')}</span>
@@ -457,55 +477,141 @@ function fileRowsHTML(list) {
     </span></li>`).join('')}</ul>`;
 }
 
-function uploadBtns(folder, opts = {}) {
+function uploadBtns(folder, opts = {}, a) {
   return `<div class="btnrow uprow">
     <label class="btn ${opts.primary ? 'primary' : ''}">${icon('upload')} Upload files<input type="file" multiple data-act="upfiles" data-folder="${esc(folder)}" hidden></label>
     <button type="button" class="btn" data-act="newnote" data-folder="${esc(folder)}">${icon('note')} New note</button>
     <button type="button" class="btn" data-act="newfolder" data-parent="${esc(folder)}">${icon('folderplus')} New folder</button>
-    ${canPickFolder ? `<label class="btn">${icon('folder')} ${opts.whole ? 'Upload the whole application folder' : 'Upload a folder'}<input type="file" webkitdirectory multiple data-act="${opts.whole ? 'upappfolder' : 'upsubfolder'}" data-folder="${esc(folder)}" hidden></label>` : ''}
+    ${canPickFolder ? `<label class="btn">${icon('folder')} ${opts.whole ? WS[(a && a.kind) || 'application'].wholeLabel : 'Upload a folder'}<input type="file" webkitdirectory multiple data-act="${opts.whole ? 'upappfolder' : 'upsubfolder'}" data-folder="${esc(folder)}" hidden></label>` : ''}
   </div>`;
 }
 
-function wsRootHTML(r, a, own, all) {
-  const K = KINDS.application;
+function wsHeadHTML(r, a, own) {
+  const K = KINDS[a.kind];
   const badge = K.badge(a), warn = K.warn(a), cal = K.calendar(a);
-  const profs = profsOf(a.id);
-  const contacted = profs.filter(p => p.status && p.status !== 'Not contacted').length;
-  const docs = (a.documents || []).length, docsAll = KINDS.application.fields.find(f => f.key === 'documents').options.length;
-  const portal = /^https?:\/\//.test(a.portal || '') ? a.portal : '';
-  const total = own.reduce((n, f) => n + (f.size || 0), 0);
-  const top = childFolders(all, '');
-  return `${crumbsHTML(a, '')}
-  <section class="card wshead">
+  const zipBtn = own.length ? `<button type="button" class="btn" data-act="zip" data-folder="">${icon('download')} Download all (.zip)</button>` : '';
+  const head = (sub, facts, btns) => `<section class="card wshead k-${a.kind}">
     <div class="wstop">
       <span class="wsicon">${icon('folder')}</span>
       <div class="wsmain">
         <h2>${esc(a.title)}</h2>
-        <p>${badge ? `<span class="badge ${badgeClass(badge)}">${esc(badge)}</span> ` : ''}${esc([a.university, a.country].filter(Boolean).join(' · ')) || '<span class="muted small">Add the university, deadline and supervisor under Details.</span>'}</p>
+        <p>${badge ? `<span class="badge ${badgeClass(badge)}">${esc(badge)}</span> ` : ''}${sub}</p>
       </div>
     </div>
-    <dl class="facts">
-      <div><dt>Deadline</dt><dd>${a.deadline ? esc(a.deadline) : '—'}${warn ? ` <span class="badge r">${esc(warn)}</span>` : ''}</dd></div>
-      <div><dt>Funding</dt><dd>${esc(a.funding || '—')}</dd></div>
-      <div><dt>Documents ready</dt><dd>${docs} of ${docsAll}</dd></div>
-      <div><dt>Professors</dt><dd>${profs.length ? `${profs.length} · ${contacted} contacted` : '—'}</dd></div>
-    </dl>
+    <dl class="facts">${facts.map(([t, v]) => `<div><dt>${t}</dt><dd>${v}</dd></div>`).join('')}</dl>
     <div class="btnrow">
-      <a class="btn primary" href="${r.base}/~e/application/${a.id}">${icon('edit')} Details</a>
-      ${portal ? `<a class="btn" href="${esc(portal)}" target="_blank" rel="noopener">${icon('ext')} Portal</a>` : ''}
-      ${cal ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(cal))}">${icon('cal')} Deadline to Calendar</a>` : ''}
-      ${own.length ? `<button type="button" class="btn" data-act="zip" data-folder="">${icon('download')} Download all (.zip)</button>` : ''}
+      <a class="btn primary" href="${r.base}/~e/${a.kind}/${a.id}">${icon('edit')} Details</a>
+      ${btns}${zipBtn}
     </div>
-  </section>
+  </section>`;
+  if (a.kind === 'article') {
+    const link = linkOf({ doi: a.doi });
+    return head(esc([a.journal, a.authors].filter(Boolean).join(' · ')) || '<span class="muted small">Add the target journal and authors under Details.</span>', [
+      ['Target date', `${a.target ? esc(a.target) : '—'}${warn ? ` <span class="badge r">${esc(warn)}</span>` : ''}`],
+      ['Submitted', esc(a.submitted || '—')],
+      ['Writing progress', `${Number(a.progress) || 0}%<span class="bar"><i style="width:${Math.min(100, Number(a.progress) || 0)}%"></i></span>`],
+      ['Project', esc(ctx.title(a.project) || '—')],
+    ], `${link ? `<a class="btn" href="${esc(link)}" target="_blank" rel="noopener">${icon('ext')} DOI / preprint</a>` : ''}
+      ${cal ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(cal))}">${icon('cal')} Target to Calendar</a>` : ''}`) + repoCardHTML(a);
+  }
+  const profs = profsOf(a.id);
+  const contacted = profs.filter(p => p.status && p.status !== 'Not contacted').length;
+  const docs = (a.documents || []).length, docsAll = KINDS.application.fields.find(f => f.key === 'documents').options.length;
+  const portal = /^https?:\/\//.test(a.portal || '') ? a.portal : '';
+  return head(esc([a.university, a.country].filter(Boolean).join(' · ')) || '<span class="muted small">Add the university, deadline and supervisor under Details.</span>', [
+    ['Deadline', `${a.deadline ? esc(a.deadline) : '—'}${warn ? ` <span class="badge r">${esc(warn)}</span>` : ''}`],
+    ['Funding', esc(a.funding || '—')],
+    ['Documents ready', `${docs} of ${docsAll}`],
+    ['Professors', profs.length ? `${profs.length} · ${contacted} contacted` : '—'],
+  ], `${portal ? `<a class="btn" href="${esc(portal)}" target="_blank" rel="noopener">${icon('ext')} Portal</a>` : ''}
+    ${cal ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(cal))}">${icon('cal')} Deadline to Calendar</a>` : ''}`);
+}
+
+// The article's GitHub repository: what it is, when it last changed, its latest commits.
+function repoCardHTML(a) {
+  const name = repoNameFromUrl(a.repo) || (repoFor(a, (cachedRepos() || {}).repos) || {}).name;
+  if (!name) return `<section class="card repocard"><div class="cardhead"><h3>${icon('github')} GitHub</h3></div>
+    <p class="muted">Link the repository with this article's code and analysis to see its latest activity here.</p>
+    <div class="btnrow"><button type="button" class="btn" data-act="ghpick" data-mode="link">${icon('github')} Link a repository</button></div></section>`;
+  const r = ((cachedRepos() || {}).repos || []).find(x => x.name.toLowerCase() === name.toLowerCase());
+  setTimeout(() => fillCommits(name), 0);
+  return `<section class="card repocard">
+    <div class="cardhead"><h3>${icon('github')} ${esc(name)}</h3>
+      <a class="btn sm" href="https://github.com/${GH_USER}/${encodeURIComponent(name)}" target="_blank" rel="noopener">${icon('ext')} Open</a></div>
+    <p class="muted small">${esc([r && r.description, r && r.language, r && 'updated ' + ago(r.pushed)].filter(Boolean).join(' · ') || 'Private repository, or not found on your public GitHub.')}</p>
+    <ul class="rows commits" id="commits" data-repo="${esc(name)}"><li class="muted small">Loading latest commits…</li></ul>
+    <div class="btnrow"><button type="button" class="btn sm" data-act="ghpick" data-mode="link">${icon('edit')} Change repository</button></div>
+  </section>`;
+}
+async function fillCommits(name) {
+  const el = app.querySelector('#commits');
+  if (!el || el.dataset.repo !== name) return;
+  try {
+    const list = await repoCommits(name);
+    const box = app.querySelector('#commits');
+    if (!box || box.dataset.repo !== name) return;
+    box.innerHTML = list.length ? list.map(c => `<li class="row"><span class="dot" style="--c:var(--dry)"></span>
+      <a class="rowmain" href="${esc(c.url)}" target="_blank" rel="noopener"><span class="t">${esc(c.msg)}</span><span class="s">${c.date ? ago(c.date) : ''}</span></a></li>`).join('')
+      : '<li class="muted small">No commits yet.</li>';
+  } catch (e) {
+    const box = app.querySelector('#commits');
+    if (box) box.innerHTML = '<li class="muted small">Commits are not visible — the repository may be private.</li>';
+  }
+}
+
+// Pick one of your GitHub repositories: start a new article from it, or link it to this article.
+async function ghPick(mode) {
+  let repos;
+  try { repos = await loadRepos(); } catch (e) { return toast('Could not reach GitHub right now.', true); }
+  const list = repos.filter(r => r.name.toLowerCase() !== GH_USER.toLowerCase() && !/\.github\.io$/i.test(r.name));
+  if (!list.length) return toast('No public repositories found on your GitHub.', true);
+  const used = new Set(items.filter(x => x.kind === 'article').map(x => (repoNameFromUrl(x.repo) || '').toLowerCase()).filter(Boolean));
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button>
+      <h2>${mode === 'new' ? 'New article from GitHub' : 'Link a repository'}</h2></div>
+    <div class="ovl-body"><p class="muted small">Your public repositories, most recently updated first.${mode === 'new' ? ' The repository’s README becomes the article’s README.' : ''}</p>
+      <ul class="rows big">${list.map(r => `<li class="row"><span class="dot" style="--c:var(--dry)"></span>
+        <button type="button" class="rowmain plain" data-repo="${esc(r.name)}"><span class="t">${esc(r.name)}</span>
+        <span class="s">${esc([r.description, r.language, 'updated ' + ago(r.pushed)].filter(Boolean).join(' · '))}</span></button>
+        ${used.has(r.name.toLowerCase()) ? '<span class="badge g">Has an article</span>' : ''}</li>`).join('')}</ul></div>`);
+  el.querySelectorAll('[data-repo]').forEach(b => b.onclick = async () => {
+    const r = list.find(x => x.name === b.dataset.repo);
+    el._close();
+    const url = `https://github.com/${GH_USER}/${r.name}`;
+    if (mode === 'link') {
+      const a = byId[route().ws];
+      if (!a) return;
+      store.save({ ...a, repo: url });
+      return toast(`Linked ${r.name}`);
+    }
+    toast(`Reading ${r.name}…`);
+    const readme = await repoReadme(r.name);
+    const proj = items.find(x => x.kind === 'project' && repoFor(x, [r]));
+    const a = {
+      id: newId(), kind: 'article', title: r.description && r.description.length < 140 ? r.description : r.name.replace(/[-_]+/g, ' '),
+      ...WS.article.fresh(), repo: url, project: proj ? proj.id : undefined, folderName: r.name,
+      notes: readme || `# ${r.name}\n\n${r.description || ''}\n\nCode: ${url}\n`, readmeName: 'README.md', folders: ART_FOLDERS, createdAt: Date.now(),
+    };
+    store.save(a);
+    pendingOpen = a;
+    go(wsHref(a.id, '', 'article'));
+    toast('Article created — rename it under Details');
+  });
+}
+
+function wsRootHTML(r, a, own, all) {
+  const total = own.reduce((n, f) => n + (f.size || 0), 0);
+  const top = childFolders(all, '');
+  return `${crumbsHTML(a, '')}
+  ${wsHeadHTML(r, a, own)}
   <h3 class="grouph">${esc(a.folderName || 'Folders')}</h3>
   ${tilesHTML(a, own, top, `
     <button type="button" class="tile readme" data-act="readme"><span class="tileic">${icon('note')}</span><span class="tilet">${esc(a.readmeName || 'README.md')}</span><span class="tiles-s">${a.notes ? 'Notes & checklist' : 'Empty — tap to write'}</span></button>
     <button type="button" class="tile add" data-act="newfolder" data-parent=""><span class="tileic">${icon('folderplus')}</span><span class="tilet">New folder</span><span class="tiles-s">&nbsp;</span></button>`)}
   ${inFolder(own, '').length ? `<h3 class="grouph">Files in this folder</h3>${fileRowsHTML(inFolder(own, ''))}` : ''}
-  ${uploadBtns('', { whole: true })}
+  ${uploadBtns('', { whole: true }, a)}
   <section class="card readmecard">
     <div class="cardhead"><h3>${icon('note')} ${esc(a.readmeName || 'README.md')}</h3><button type="button" class="btn sm" data-act="readme">${icon('edit')} Edit</button></div>
-    ${a.notes ? `<div class="md">${mdToHtml(a.notes)}</div>` : `<p class="muted">Write what this application needs — requirements, steps, contacts, interview prep. Checklists work too: <code>- [ ] Send CV</code></p>`}
+    ${a.notes ? `<div class="md">${mdToHtml(a.notes)}</div>` : `<p class="muted">${WS[a.kind].readmeHint}</p>`}
   </section>
   <p class="small muted">${own.length} file${own.length === 1 ? '' : 's'} · ${fmtSize(total)} · stored privately in your Google account and synced to all your devices.
   ${canPickFolder ? 'Tip: drag files from your computer onto any folder to upload them.' : ''}</p>`;
@@ -518,13 +624,13 @@ function folderHTML(r, a, own, all) {
   }
   const subs = childFolders(all, path);
   const here = inFolder(own, path);
-  const profs = isProfFolder(path) ? profsOf(a.id) : null;
+  const profs = isProfFolder(path, a) ? profsOf(a.id) : null;
   return `${crumbsHTML(a, path)}
   <div class="folderhead">
     <span class="wsicon">${icon('folder')}</span>
     <div><h2>${folderTitle(lastPart(path))}</h2><p class="small muted">${esc(lastPart(path))} · ${plural(underFolder(own, path).length, 'file')}</p></div>
   </div>
-  ${uploadBtns(path, { primary: true })}
+  ${uploadBtns(path, { primary: true }, a)}
   ${profs ? `<section class="card">
     <div class="cardhead"><h3>${icon('person')} Professors</h3><a class="btn sm" href="${r.base}/~e/professor/new">${icon('plus')} Add professor</a></div>
     ${profs.length ? `<ul class="rows">${profs.map(p => rowHTML(p, 0, 0, `${r.base}/~e/professor/${p.id}`)).join('')}</ul>`
@@ -617,7 +723,7 @@ async function uploadMany(appId, list) {
   if (parts.length) toast((navigator.onLine ? '' : 'Offline — saved on this device and will upload later. ') + parts.join(', '), !!failed);
 }
 
-async function importAppFolder(fileList, intoApp, mode) {
+async function importAppFolder(fileList, intoApp, mode, kind = 'application') {
   const m = mapFolderUpload(fileList);
   if (!m.files.length && !m.readme) return toast('That folder is empty.', true);
   const readmeText = m.readme ? await m.readme.text() : '';
@@ -629,12 +735,13 @@ async function importAppFolder(fileList, intoApp, mode) {
     return queueUpload(intoApp.app.id, list);
   }
   const topFolders = [...new Set(m.files.map(x => x.folder.split('/')[0]).filter(Boolean))];
-  let a = intoApp || items.find(x => x.kind === 'application' && (x.folderName || '').toLowerCase() === m.top.toLowerCase());
+  let a = intoApp || items.find(x => x.kind === kind && (x.folderName || '').toLowerCase() === m.top.toLowerCase());
   if (!a) {
-    if (!confirm(`Create the application “${prettyFolder(m.top)}” from this folder (${m.files.length} files)?\n\nYou can add the university, deadline and status afterwards under Details.`)) return;
+    const W = WS[kind];
+    if (!confirm(`Create the ${W.noun} “${prettyFolder(m.top)}” from this folder (${m.files.length} files)?\n\nYou can fill in the details afterwards under Details.`)) return;
     a = {
-      id: newId(), kind: 'application', title: prettyFolder(m.top) || 'New application', status: 'Researching', documents: [],
-      folderName: m.top, folders: topFolders.length ? topFolders : APP_FOLDERS, notes: readmeText, readmeName: m.readme ? m.readme.name : undefined, createdAt: Date.now(),
+      id: newId(), kind, title: prettyFolder(m.top) || 'New ' + W.noun, ...W.fresh(),
+      folderName: m.top, folders: topFolders.length ? topFolders : W.folders, notes: readmeText, readmeName: m.readme ? m.readme.name : undefined, createdAt: Date.now(),
     };
     store.save(a);
     pendingOpen = a;
@@ -704,13 +811,13 @@ async function zipDownload(a, folder) {
   finally { upbar(null); }
 }
 async function zipAllApplications() {
-  const apps = items.filter(x => x.kind === 'application');
+  const apps = items.filter(x => WS[x.kind]);
   const entries = [];
   const n = files.filter(f => byId[f.app]).length;
   let k = 0;
   try {
     for (const a of apps) {
-      const root = 'PhD_Applications/' + zipRoot(a);
+      const root = WS[a.kind].zipRoot + '/' + zipRoot(a);
       if ((a.notes || '').trim()) entries.push({ path: `${root}/${cleanName(a.readmeName || 'README.md')}`, data: a.notes });
       for (const f of filesOf(a.id)) {
         upbar(`Preparing zip: ${++k} of ${n}`, k / Math.max(1, n));
@@ -718,10 +825,10 @@ async function zipAllApplications() {
         entries.push({ path: [root, f.folder, f.name].filter(Boolean).join('/'), data: new Uint8Array(await blob.arrayBuffer()) });
       }
     }
-    if (!entries.length) return toast('No PhD files yet.');
+    if (!entries.length) return toast('No files yet.');
     upbar('Packing…', 1);
-    saveBlob(new Blob([buildZip(entries)], { type: 'application/zip' }), `PhD_Applications_${today()}.zip`);
-    toast('Downloaded all PhD folders');
+    saveBlob(new Blob([buildZip(entries)], { type: 'application/zip' }), `Research_Log_folders_${today()}.zip`);
+    toast('Downloaded all folders');
   } catch (e) { toast(e.message, true); }
   finally { upbar(null); }
 }
@@ -879,7 +986,13 @@ async function publishAll() {
     } catch (e) { failed = e && e.code === 'permission-denied' ? 'rules' : 'error'; }
   }
   const site = sharing.site || defaultSharing().site;
-  const sitePayload = { name, items: site.enabled ? snapshot(items, site, { site: true }) : [], inProgress: !!site.inProgress, off: !site.enabled };
+  // A research article that is Published or Accepted also counts as a publication on the website.
+  const norm = t => String(t || '').trim().toLowerCase();
+  const asPub = items.filter(x => x.kind === 'article' && ['Published', 'Accepted'].includes(x.status)
+      && !items.some(p => p.kind === 'publication' && norm(p.title) === norm(x.title)))
+    .map(x => ({ id: 'article-' + x.id, kind: 'publication', title: x.title, status: x.status, venue: x.journal, authors: x.authors, doi: x.doi,
+      year: Number((x.submitted || '').slice(0, 4)) || new Date(x.updatedAt || Date.now()).getFullYear(), noShare: x.noShare, updatedAt: x.updatedAt }));
+  const sitePayload = { name, items: site.enabled ? snapshot(items.concat(asPub), site, { site: true }) : [], inProgress: !!site.inProgress, off: !site.enabled };
   const sjson = JSON.stringify(sitePayload);
   if (lastSent.__site !== sjson) {
     try { await store.setSite({ json: JSON.stringify({ ...sitePayload, generatedAt: Date.now() }) }); lastSent.__site = sjson; site.published = Date.now(); }
@@ -1086,9 +1199,9 @@ function settingsHTML() {
       <button class="btn" data-act="export">${icon('download')} Export data (.json)</button>
       <label class="btn">${icon('upload')} Import data<input type="file" accept="application/json,.json" data-act="import" hidden></label>
       <button class="btn" data-act="seed">Import CV &amp; projects</button>
-      ${files.length ? `<button class="btn" data-act="zipall">${icon('download')} Download all PhD folders (.zip)</button>` : ''}
+      ${files.length ? `<button class="btn" data-act="zipall">${icon('download')} Download all folders (.zip)</button>` : ''}
     </div>
-    ${files.length ? `<p class="small muted">PhD files: ${files.length} · ${fmtSize(files.reduce((n, f) => n + (f.size || 0), 0))} of about 1 GB included free in your Firebase plan.</p>` : ''}
+    ${files.length ? `<p class="small muted">Files (PhD applications and articles): ${files.length} · ${fmtSize(files.reduce((n, f) => n + (f.size || 0), 0))} of about 1 GB included free in your Firebase plan.</p>` : ''}
     <p class="small muted">Exports include all records but not photos or files (download those as .zip). The file contains your private notes — keep it somewhere only you can access.</p>
   </section>
   <section class="card">
@@ -1272,6 +1385,7 @@ app.addEventListener('click', async e => {
     case 'showdone': ui.showDone = t.checked; render(); break;
     case 'appgroup': ui.appGroup = t.dataset.g; render(); break;
     case 'ghadd': addRepoAsProject(t.dataset.repo); break;
+    case 'ghpick': ghPick(t.dataset.mode); break;
     case 'link-new': linkEditor(null); break;
     case 'link-edit': linkEditor(sharing.links.find(l => l.id === t.dataset.id)); break;
     case 'link-copy': copyLink(sharing.links.find(l => l.id === t.dataset.id)); break;
@@ -1283,12 +1397,12 @@ app.addEventListener('click', async e => {
       closeEditor();
       break;
     case 'delete': {
-      const own = editor.kind === 'application' ? files.filter(f => f.app === editor.item.id) : [];
+      const own = WS[editor.kind] ? files.filter(f => f.app === editor.item.id) : [];
       if (!confirm(`Delete this ${KINDS[editor.kind].label.toLowerCase()}${own.length ? ` and its ${own.length} file${own.length > 1 ? 's' : ''}` : ''}? This cannot be undone.`)) return;
       (editor.item.photos || []).forEach(id => store.removePhoto(id));
       own.forEach(f => store.deleteFile(f));
       store.remove(editor.item.id);
-      if (editor.kind === 'application' && r.ws) { editor = null; closeEditor(true); go('#/phd/application'); }
+      if (WS[editor.kind] && r.ws) { const back = WS[editor.kind].list; editor = null; closeEditor(true); go(back); }
       else closeEditor();
       toast('Deleted');
       break;
@@ -1409,7 +1523,7 @@ app.addEventListener('change', async e => {
     t.value = '';
     if (!list.length) return;
     const r = route(), a = r.ws && byId[r.ws];
-    if (act === 'importfolder') return importAppFolder(list, null);
+    if (act === 'importfolder') return importAppFolder(list, null, null, t.dataset.kind || 'application');
     if (!a) return;
     if (act === 'upappfolder') return importAppFolder(list, a);
     if (act === 'upsubfolder') return importAppFolder(list, { app: a, folder }, 'sub');
@@ -1642,6 +1756,7 @@ Reply with ONE JSON code block only, shaped like {"items": [ ... ]}. Use only fa
 Each item needs "kind" and "title", plus any of these fields (dates as YYYY-MM-DD):
 - application: university, country, status (Researching | Contacted supervisor | Preparing | Submitted | Interview | Offer | Accepted | Rejected | Declined), deadline, supervisor, supervisorEmail, funding, portal, documents (list from: CV, Statement of purpose, Research proposal, References, Transcripts, Language test, Publications, Portfolio / writing sample — only the ones already ready), notes
 - professor: application (exact title of the application, if known), status (Not contacted | Emailed | Follow-up sent | Replied | Meeting / interview | Positive | No position | No reply), institute, email, website, contacted (date first emailed), followUp (date), research, fit, notes
+- article (my own research article / manuscript): status (Idea | Drafting | Internal review | Submitted | Under review | Revision | Accepted | Published | Rejected), journal (target journal), progress (0-100), target (target submission date), submitted, authors, repo (GitHub URL), doi, notes
 - task: due, priority (Low | Medium | High), notes, done (true/false)
 - project: status (Idea | Active | On hold | Done), area (Wet lab | Computational | Both), progress (0-100), start, target, description
 - experiment: date, status (Planned | In progress | Completed | Failed | Repeated), objective, materials, procedure, results, conclusion

@@ -25,7 +25,7 @@ export async function loadRepos(force) {
 }
 // "https://github.com/Hafij-BGE/sh3-mechanism" anywhere in a project's links → that repository.
 export function repoFor(x, repos) {
-  const text = [x.links, x.description, x.source].filter(Boolean).join(' ');
+  const text = [x.repo, x.links, x.description, x.source].filter(Boolean).join(' ');
   const re = new RegExp(`github\\.com/${GH_USER}/([A-Za-z0-9_.-]+)`, 'gi');
   let m;
   while ((m = re.exec(text))) { const n = m[1].replace(/\.git$/, '').toLowerCase(); const r = (repos || []).find(r => r.name.toLowerCase() === n); if (r) return r; }
@@ -39,3 +39,19 @@ export function ago(iso) {
   if (d < 86400 * 400) return `${Math.round(d / 86400 / 30)} mo ago`;
   return `${(d / 86400 / 365).toFixed(1)} y ago`;
 }
+
+// A repository's README text and latest commits (public repositories only; remembered for this visit).
+const extra = {};
+const ghGet = (path, accept) => fetch(`https://api.github.com/repos/${GH_USER}/${path}`, { headers: { Accept: accept || 'application/vnd.github+json' } })
+  .then(r => (r.ok ? (accept ? r.text() : r.json()) : Promise.reject(new Error('GitHub ' + r.status))));
+export function repoReadme(name) {
+  const k = 'readme:' + name;
+  return (extra[k] ||= ghGet(`${encodeURIComponent(name)}/readme`, 'application/vnd.github.raw+json').catch(() => ''));
+}
+export function repoCommits(name) {
+  const k = 'commits:' + name;
+  return (extra[k] ||= ghGet(`${encodeURIComponent(name)}/commits?per_page=5`)
+    .then(list => list.map(c => ({ msg: (c.commit.message || '').split('\n')[0], date: c.commit.author && c.commit.author.date, url: c.html_url })))
+    .catch(e => { delete extra[k]; throw e; }));
+}
+export const repoNameFromUrl = url => { const m = new RegExp(`github\\.com/${GH_USER}/([A-Za-z0-9_.-]+)`, 'i').exec(url || ''); return m ? m[1].replace(/\.git$/, '') : ''; };

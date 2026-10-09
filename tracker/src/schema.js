@@ -5,7 +5,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export const SECTIONS = [
   { id: 'lab', label: 'Lab', kinds: ['experiment', 'protocol', 'inventory'] },
-  { id: 'research', label: 'Research', kinds: ['project', 'task', 'paper'] },
+  { id: 'research', label: 'Research', kinds: ['project', 'article', 'task', 'paper'] },
   { id: 'phd', label: 'PhD', kinds: ['application', 'professor'] },
   { id: 'profile', label: 'Profile', kinds: ['publication', 'talk', 'award'] },
 ];
@@ -15,6 +15,11 @@ export const APP_STATUS = ['Researching', 'Contacted supervisor', 'Preparing', '
 // Every application gets these folders to start with (the same layout as the owner's own PC folders).
 export const APP_FOLDERS = ['01_Program_Info', '02_My_Profile', '03_Professors', '04_Templates_General'];
 export const PROF_STATUS = ['Not contacted', 'Emailed', 'Follow-up sent', 'Replied', 'Meeting / interview', 'Positive', 'No position', 'No reply'];
+// Every research article starts with these folders.
+export const ART_FOLDERS = ['01_Manuscript', '02_Figures', '03_Data_Analysis', '04_Supplementary', '05_Submission_Reviews'];
+export const ART_STATUS = ['Idea', 'Drafting', 'Internal review', 'Submitted', 'Under review', 'Revision', 'Accepted', 'Published', 'Rejected'];
+const ART_WORKING = ['Idea', 'Drafting', 'Internal review', 'Revision'];
+
 // Where an application stands, for the PhD list: Ongoing, Upcoming, Missed or Done.
 export const APP_GROUPS = [
   { id: 'ongoing', label: 'Ongoing', hint: 'Started — preparing, contacted, submitted, interview or offer' },
@@ -125,6 +130,35 @@ export const KINDS = {
       { key: 'project', label: 'Project', type: 'ref', ref: 'project' },
       { key: 'done', label: 'Done', type: 'check' },
       { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+  },
+  article: {
+    label: 'Research article', plural: 'Articles', color: 'var(--accent)', workspace: true,
+    sort: (a, b) => artRank(a.status) - artRank(b.status) || (a.target || '9999').localeCompare(b.target || '9999') || (b.updatedAt || 0) - (a.updatedAt || 0),
+    sub: (x, ctx) => [x.journal, x.target && ART_WORKING.includes(x.status || 'Drafting') && 'target ' + x.target, ctx && ctx.activity && ctx.activity(x)].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    progress: x => Number(x.progress) || 0,
+    warn: x => {
+      if (!x.target || !ART_WORKING.includes(x.status || 'Drafting')) return null;
+      const days = Math.round((new Date(x.target) - new Date(today())) / 864e5);
+      if (days < 0) return 'Target passed';
+      if (days <= 7) return days === 0 ? 'Due today' : `Due in ${days} d`;
+      return null;
+    },
+    calendar: x => x.target && ART_WORKING.includes(x.status || 'Drafting') && { date: x.target, title: 'Submit article: ' + x.title, details: [x.journal, x.repo].filter(Boolean).join(' · ') },
+    fields: [
+      { key: 'title', label: 'Working title', type: 'text', required: true, placeholder: 'e.g. Bacterial HLA ligands do not survive error control' },
+      { key: 'status', label: 'Stage', type: 'select', options: ART_STATUS, default: () => 'Drafting' },
+      { key: 'journal', label: 'Target journal', type: 'text' },
+      { key: 'progress', label: 'Writing progress', type: 'range', default: () => 0 },
+      { key: 'target', label: 'Target submission date', type: 'date' },
+      { key: 'submitted', label: 'Submitted on', type: 'date' },
+      { key: 'authors', label: 'Authors', type: 'text', placeholder: 'Rahman MH, …' },
+      { key: 'project', label: 'Project', type: 'ref', ref: 'project' },
+      { key: 'repo', label: 'GitHub repository', type: 'url', placeholder: 'https://github.com/Hafij-BGE/…' },
+      { key: 'doi', label: 'DOI / preprint link', type: 'url' },
+      { key: 'notes', label: 'README (aim, key results, figure list, to-dos — shown at the top of the folder)', type: 'textarea', rows: 6 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
     ],
   },
   paper: {
@@ -245,6 +279,7 @@ export const KINDS = {
 };
 
 function closed(x) { return ['Accepted', 'Rejected', 'Declined'].includes(x.status) ? 1 : 0; }
+function artRank(s) { return { Revision: 0, Drafting: 1, 'Internal review': 2, Idea: 3, Submitted: 4, 'Under review': 5, Accepted: 6, Published: 7, Rejected: 8 }[s] ?? 1; }
 function profRank(s) { return { Positive: 0, 'Meeting / interview': 1, Replied: 2, 'Follow-up sent': 3, Emailed: 4, 'Not contacted': 5, 'No reply': 6, 'No position': 7 }[s] ?? 5; }
 function statusRank(s) { return { Active: 0, Idea: 1, 'On hold': 2, Done: 3 }[s] ?? 4; }
 function prioRank(p) { return { High: 0, Medium: 1, Low: 2 }[p] ?? 3; }
