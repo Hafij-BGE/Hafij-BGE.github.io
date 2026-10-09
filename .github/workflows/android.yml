@@ -35,6 +35,7 @@ jobs:
           RL_SIGNING: ${{ secrets.RL_SIGNING }}
         run: |
           cd android
+          echo "KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
           if [ -n "$RL_SIGNING" ]; then
             PW="${RL_SIGNING%%:*}"
             echo "::add-mask::$PW"
