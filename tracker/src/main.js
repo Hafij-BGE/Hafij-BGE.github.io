@@ -95,7 +95,15 @@ function boot() {
   });
   if (store.mode === 'cloud') store.on('items', () => offerMigration());
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; render(); });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // When a newer version of the app is installed, switch to it straight away.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded && !editor) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+  }
   render();
 }
 
@@ -668,12 +676,41 @@ function exportData() {
 async function importData(file) {
   try {
     const json = JSON.parse(await file.text());
-    const list = (json.items || json).filter(x => x && KINDS[x.kind]);
+    const list = (json.items || json).filter(x => x && KINDS[x.kind] && x.title);
     if (!list.length) return toast('No records found in that file.', true);
-    if (!confirm(`Import ${list.length} records? Records with the same ID will be replaced.`)) return;
-    const clean = list.map(({ photos, ...x }) => ({ ...x, photos: (photos || []).filter(id => byId[x.id] && (byId[x.id].photos || []).includes(id)) }));
-    await store.bulkSave(clean);
-    toast(`Imported ${list.length} records`);
+    // Merge, never overwrite: a record that already exists (same ID, or same type and title)
+    // only gets its empty fields filled in; everything else is added as new.
+    const norm = t => String(t || '').trim().toLowerCase();
+    const byKey = new Map(items.map(x => [x.kind + '|' + norm(x.title), x]));
+    const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+    const idMap = {}, out = [];
+    let added = 0, completed = 0;
+    for (const raw of list) {
+      const { photos, ...x } = raw;
+      const existing = (x.id && byId[x.id]) || byKey.get(x.kind + '|' + norm(x.title));
+      if (existing) {
+        idMap[x.id] = existing.id;
+        const merged = { ...existing };
+        let changed = false;
+        for (const [k, v] of Object.entries(x)) {
+          if (k === 'id' || isEmpty(v)) continue;
+          if (isEmpty(merged[k])) { merged[k] = v; changed = true; }
+        }
+        if (changed) { out.push(merged); completed++; }
+      } else {
+        const id = x.id || newId();
+        idMap[x.id] = id;
+        const rec = { ...x, id, createdAt: x.createdAt || Date.now() };
+        if (KINDS[x.kind].fields.some(f => f.type === 'photos')) rec.photos = [];
+        out.push(rec); added++;
+      }
+    }
+    for (const it of out) for (const f of KINDS[it.kind].fields)
+      if (f.type === 'ref' && it[f.key] && idMap[it[f.key]]) it[f.key] = idMap[it[f.key]];
+    if (!out.length) return toast('Everything in that file is already in your log.');
+    if (!confirm(`Import ${added} new record${added === 1 ? '' : 's'} and complete ${completed} existing one${completed === 1 ? '' : 's'}? Nothing you have written will be overwritten.`)) return;
+    await store.bulkSave(out);
+    toast(`Imported: ${added} new, ${completed} completed`);
   } catch (err) { toast('That file could not be read as a Research Log export.', true); }
 }
 
