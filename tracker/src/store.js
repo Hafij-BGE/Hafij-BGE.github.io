@@ -8,9 +8,17 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, setDoc, deleteDoc, getDoc, onSnapshot, writeBatch,
-  terminate, clearIndexedDbPersistence,
+  collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, writeBatch,
+  terminate, clearIndexedDbPersistence, Bytes,
 } from 'firebase/firestore';
+
+// Files (PDFs, Word files, images…) are kept in the owner's own Firestore database, split into
+// pieces small enough for one database record each (the free plan has no file storage).
+// users/{uid}/files/{id}            — name, folder, size, type, application
+// users/{uid}/files/{id}/chunks/{n} — the file's bytes, in order
+export const CHUNK = 900 * 1024;
+export const MAX_FILE = 25 * 1024 * 1024;
+const chunkId = i => String(i).padStart(4, '0');
 
 // Remove everything this app stored in the browser (demo data, photos).
 // keepSetup = true keeps this device's sync setup (used after moving demo data into the account).
@@ -68,6 +76,7 @@ export class CloudStore extends Emitter {
     getRedirectResult(this.auth).catch(e => this.emit('error', friendly(e)));
     onAuthStateChanged(this.auth, u => {
       if (this.unsub) { this.unsub(); this.unsub = null; }
+      if (this.unsubFiles) { this.unsubFiles(); this.unsubFiles = null; }
       this.user = u ? { uid: u.uid, name: u.displayName, email: u.email, photo: u.photoURL } : null;
       this.emit('auth', this.user);
       if (u) this.subscribe();
@@ -77,6 +86,9 @@ export class CloudStore extends Emitter {
   }
   col(name) { return collection(this.db, 'users', this.user.uid, name); }
   subscribe() {
+    this.unsubFiles = onSnapshot(this.col('files'), snap => {
+      this.emit('files', snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, e => { if (!(e && e.code === 'permission-denied')) this.emit('error', friendly(e)); });
     this.unsub = onSnapshot(this.col('items'), { includeMetadataChanges: true }, snap => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       this.pending = snap.metadata.hasPendingWrites;
@@ -106,6 +118,7 @@ export class CloudStore extends Emitter {
   // Signing out also erases this device's offline copy, so nothing is left behind on a shared computer.
   async signOut() {
     if (this.unsub) { this.unsub(); this.unsub = null; }
+    if (this.unsubFiles) { this.unsubFiles(); this.unsubFiles = null; }
     try { await signOut(this.auth); } catch (e) {}
     try { await terminate(this.db); await clearIndexedDbPersistence(this.db); } catch (e) {}
     wipeLocal();
@@ -137,6 +150,50 @@ export class CloudStore extends Emitter {
     return snap.exists() ? snap.data() : null;
   }
   setMeta(name, data) { return setDoc(doc(this.db, 'users', this.user.uid, 'meta', name), clean(data)); }
+  /* ---- files ---- */
+  chunkRef(id, i) { return doc(this.db, 'users', this.user.uid, 'files', id, 'chunks', chunkId(i)); }
+  // Writes the pieces first and the file's entry last, so other devices only list it once it is whole.
+  // Returns at once with the new id; `done` settles when the upload has reached the server
+  // (while offline it waits, and the upload continues by itself when the connection is back).
+  async putFile(blob, meta, onProgress, id = newId(), oldChunks = 0) {
+    if (blob.size > MAX_FILE) throw new Error(`“${meta.name}” is larger than ${MAX_FILE / 1048576} MB.`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const n = Math.ceil(bytes.length / CHUNK);
+    let sent = 0;
+    const tick = p => p.then(() => { sent++; onProgress && onProgress(sent, n + 1); });
+    const jobs = [];
+    for (let i = 0; i < n; i++) {
+      jobs.push(tick(setDoc(this.chunkRef(id, i), { i, data: Bytes.fromUint8Array(bytes.subarray(i * CHUNK, (i + 1) * CHUNK)) })));
+    }
+    for (let i = n; i < oldChunks; i++) jobs.push(deleteDoc(this.chunkRef(id, i)));
+    const rec = clean({ ...meta, size: bytes.length, chunks: n, type: meta.type || blob.type || '', updatedAt: Date.now(), createdAt: meta.createdAt || Date.now() });
+    jobs.push(tick(setDoc(doc(this.col('files'), id), rec)));
+    const done = Promise.all(jobs).catch(e => { this.emit('error', friendly(e)); throw e; });
+    return { id, done };
+  }
+  async replaceFile(f, blob, onProgress) {
+    const { id, ...meta } = f;
+    return this.putFile(blob, meta, onProgress, id, f.chunks || 0);
+  }
+  async readFile(f) {
+    const snap = await getDocs(collection(this.db, 'users', this.user.uid, 'files', f.id, 'chunks'));
+    const parts = snap.docs.map(d => d.data()).filter(c => c.i < f.chunks).sort((a, b) => a.i - b.i);
+    const notYet = () => new Error(navigator.onLine ? 'This file is still uploading from another device. Try again in a minute.'
+      : 'This file is not saved on this device yet. Open it once while online to keep it for offline use.');
+    if (parts.length !== f.chunks) throw notYet();
+    const blob = new Blob(parts.map(c => c.data.toUint8Array()), { type: f.type || 'application/octet-stream' });
+    if (blob.size !== f.size) throw notYet();
+    return blob;
+  }
+  updateFile(id, patch) {
+    return setDoc(doc(this.col('files'), id), clean({ ...patch, updatedAt: Date.now() }), { merge: true })
+      .catch(e => this.emit('error', friendly(e)));
+  }
+  deleteFile(f) {
+    const jobs = [deleteDoc(doc(this.col('files'), f.id))];
+    for (let i = 0; i < (f.chunks || 0); i++) jobs.push(deleteDoc(this.chunkRef(f.id, i)));
+    return Promise.all(jobs).catch(e => this.emit('error', friendly(e)));
+  }
   async bulkSave(items) {
     for (let i = 0; i < items.length; i += 400) {
       const b = writeBatch(this.db);
@@ -163,7 +220,7 @@ export class LocalStore extends Emitter {
     this.user = { uid: 'local', name: '', email: 'Stored in this browser only' };
     this.items = {};
     try { this.items = JSON.parse(localStorage.getItem('rl.items') || '{}'); } catch (e) {}
-    queueMicrotask(() => { this.emit('auth', this.user); this.flush(); });
+    queueMicrotask(() => { this.emit('auth', this.user); this.emit('files', []); this.flush(); });
   }
   flush() {
     try { localStorage.setItem('rl.items', JSON.stringify(this.items)); }
@@ -190,6 +247,11 @@ export class LocalStore extends Emitter {
   removePhoto(id) { try { localStorage.removeItem('rl.photo.' + id); } catch (e) {} }
   async getMeta(name) { try { return JSON.parse(localStorage.getItem('rl.meta.' + name) || 'null'); } catch (e) { return null; } }
   async setMeta(name, data) { try { localStorage.setItem('rl.meta.' + name, JSON.stringify(data)); } catch (e) {} }
+  // Files need Google sync; this browser alone has too little room for them.
+  async putFile() { throw new Error('Sign in with Google to store files.'); }
+  async replaceFile() { throw new Error('Sign in with Google to store files.'); }
+  async readFile() { throw new Error('Sign in with Google to open files.'); }
+  updateFile() {} deleteFile() {}
   async bulkSave(items) {
     items.forEach(it => { const { id, ...d } = it; this.items[id || newId()] = clean({ ...d, updatedAt: Date.now() }); });
     this.flush();

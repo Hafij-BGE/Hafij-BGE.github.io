@@ -1,5 +1,9 @@
-import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN } from './schema.js';
-import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup } from './store.js';
+import { KINDS, SECTIONS, CV_SEED, dueLabel, textOf, APP_OPEN, APP_FOLDERS } from './schema.js';
+import { CloudStore, LocalStore, newId, wipeLocal, parseSetup, loadSetup, saveSetup, MAX_FILE } from './store.js';
+import {
+  prettyFolder, lastPart, parentOf, cleanName, fmtSize, extOf, fileKind, viewable, folderSet, childFolders,
+  inFolder, underFolder, mdToHtml, buildZip, mapFolderUpload,
+} from './files.js';
 import qrcode from 'qrcode-generator';
 import BUNDLED_CONFIG from './firebase-config.js';
 
@@ -25,7 +29,7 @@ const cfg = builtIn || loadSetup();
 const hasCfg = !!cfg;
 
 let store;
-let items = [], byId = {}, user = null, status = '', authKnown = false;
+let items = [], byId = {}, files = [], user = null, status = '', authKnown = false;
 let deferredInstall = null;
 let editor = null;            // { kind, item, isNew, newPhotos:[], removedPhotos:[], dirty }
 let pendingOpen = null;       // a just-created record not yet echoed back by the store
@@ -33,7 +37,7 @@ const ui = { showDone: false, filters: {} };
 
 const app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ctx = { projectName: id => (id && byId[id] ? byId[id].title : '') };
+const ctx = { projectName: id => (id && byId[id] ? byId[id].title : ''), title: id => (id && byId[id] ? byId[id].title : '') };
 const today = () => new Date().toISOString().slice(0, 10);
 
 /* ---------------- icons ---------------- */
@@ -56,6 +60,16 @@ const I = {
   img: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-8 8"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   upload: '<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  folderplus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  pdf: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 15.5h7M8.5 12h4"/>',
+  note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  zip: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M11 6h1M11 9h1M11 12h1v3h-1z"/>',
+  person: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 
@@ -69,9 +83,24 @@ function route() {
     r.kind = sec.kinds.includes(p[1]) ? p[1] : sec.kinds[0];
     if (p[2] === 'new') r.edit = 'new';
     if (p[2] === 'edit' && p[3]) r.edit = p[3];
+    // An application's own folder: #/phd/application/open/<id>[/f/<folder>/<sub>…][/~e/<kind>/<id|new>]
+    if (r.kind === 'application' && p[2] === 'open' && p[3]) {
+      r.ws = p[3];
+      let rest = p.slice(4);
+      const ei = rest.indexOf('~e');
+      if (ei >= 0) {
+        const k = rest[ei + 1];
+        if (KINDS[k]) { r.kind = k; r.edit = rest[ei + 2] || 'new'; }
+        rest = rest.slice(0, ei);
+      }
+      r.folder = rest[0] === 'f' ? rest.slice(1).map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } }).join('/') : '';
+      r.base = wsHref(r.ws, r.folder);
+    }
   }
   return r;
 }
+const wsHref = (id, folder) => `#/phd/application/open/${id}` + (folder ? '/f/' + folder.split('/').map(encodeURIComponent).join('/') : '');
+const listHref = r => r.base || `#/${r.section.id}/${r.kind}`;
 const go = h => { if (location.hash !== h) location.hash = h; else render(); };
 addEventListener('hashchange', () => { openEditorFromRoute(); render(); });
 
@@ -91,6 +120,7 @@ function boot() {
     }
     render();
   });
+  store.on('files', list => { files = list; if (!editor) render(); });
   store.on('status', s => { status = s; renderStatus(); if (s === 'synced' || s === 'local') checkClaudeUpdates(); });
   store.on('error', msg => toast(msg, true));
   store.on('denied', () => {
@@ -133,7 +163,8 @@ function render() {
   const r = route();
   const view = app.querySelector('#view');
   let html = '';
-  if (r.section) html = sectionHTML(r);
+  if (r.ws) html = workspaceHTML(r);
+  else if (r.section) html = sectionHTML(r);
   else if (r.view === 'search') html = searchHTML();
   else if (r.view === 'settings') { html = settingsHTML(); setTimeout(renderClaudeCard, 0); }
   else html = homeHTML();
@@ -142,7 +173,7 @@ function render() {
   if (ui.scrollTo) { const el = view.querySelector('#' + ui.scrollTo); ui.scrollTo = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30); }
   if (r.view === 'search') { const q = view.querySelector('#q'); q && q.focus(); }
   const fab = app.querySelector('#fab');
-  fab.hidden = !r.section;
+  fab.hidden = !r.section || !!r.ws;
   if (r.section) fab.setAttribute('aria-label', 'Add ' + KINDS[r.kind].label.toLowerCase());
   openEditorFromRoute();
 }
@@ -151,7 +182,7 @@ function renderChrome() {
   const r = route();
   app.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === (r.section ? r.section.id : r.view)));
   const titles = { home: 'Research Log', search: 'Search', settings: 'Settings' };
-  app.querySelector('#title').textContent = r.section ? r.section.label : titles[r.view] || 'Research Log';
+  app.querySelector('#title').textContent = r.ws ? 'PhD folder' : r.section ? r.section.label : titles[r.view] || 'Research Log';
   renderStatus();
 }
 
@@ -183,6 +214,7 @@ function shellHTML() {
     </div>
     <button id="fab" class="fab" data-act="add" hidden>${icon('plus')}</button>
     <div id="sheet" class="sheet" hidden></div>
+    <div id="upbar" class="upbar" hidden></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </div>`;
 }
@@ -278,6 +310,7 @@ function sectionHTML(r) {
   </div>
   <div class="toolbar">
     <input id="filter" class="filter" type="search" placeholder="Filter ${K.plural.toLowerCase()}…" value="${esc(ui.filters[r.kind] || '')}" aria-label="Filter">
+    ${r.kind === 'application' && canPickFolder ? `<label class="btn">${icon('folder')} Import application folder<input type="file" data-act="importfolder" webkitdirectory multiple hidden></label>` : ''}
     ${r.kind === 'task' ? `<label class="toggle"><input type="checkbox" data-act="showdone" ${ui.showDone ? 'checked' : ''}> Show done (${doneCount})</label>` : ''}
   </div>
   ${list.length ? `<ul class="rows big">${list.map(rowHTML).join('')}</ul>`
@@ -304,9 +337,10 @@ function linkOf(x) {
   return /^10\.\d/.test(v) ? 'https://doi.org/' + v : (/^https?:\/\//.test(v) ? v : '');
 }
 
-function rowHTML(x) {
+function rowHTML(x, _i, _all, hrefOverride) {
   const K = KINDS[x.kind];
-  const href = `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`;
+  const href = hrefOverride || (x.kind === 'application' ? wsHref(x.id) : `#/${sectionOf(x.kind)}/${x.kind}/edit/${x.id}`);
+  const nfiles = x.kind === 'application' ? files.filter(f => f.app === x.id).length : 0;
   const badge = K.badge && K.badge(x);
   const warn = K.warn && K.warn(x);
   const overdue = x.kind === 'task' && !x.done && x.due && x.due < today();
@@ -320,12 +354,466 @@ function rowHTML(x) {
       ${K.progress ? `<span class="bar"><i style="width:${Math.min(100, K.progress(x))}%"></i></span>` : ''}
     </a>
     <span class="tail">
+      ${nfiles ? `<span class="pc" title="${nfiles} file${nfiles > 1 ? 's' : ''}">${icon('file')}${nfiles}</span>` : ''}
       ${photos ? `<span class="pc" title="${photos} photo${photos > 1 ? 's' : ''}">${icon('img')}${photos}</span>` : ''}
       ${warn ? `<span class="badge r">${esc(warn)}</span>` : badge ? `<span class="badge ${badgeClass(badge)}">${esc(badge)}</span>` : ''}
       ${link ? `<a class="iconbtn sm" href="${esc(link)}" target="_blank" rel="noopener" aria-label="Open link">${icon('ext')}</a>` : ''}
     </span>
   </li>`;
 }
+
+/* ---------------- PhD application folders ----------------
+   Each application is a folder, laid out like the owner's folders on his computer:
+   README.md plus 01_Program_Info, 02_My_Profile, 03_Professors, 04_Templates_General (renamable),
+   with sub-folders and files of any type. Files live in the owner's own Firebase database. */
+const canPickFolder = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && 'webkitdirectory' in document.createElement('input');
+const appFolders = a => (Array.isArray(a.folders) ? a.folders : APP_FOLDERS);
+const zipRoot = a => cleanName(a.folderName || (a.title || 'Application').replace(/\s+/g, '_')) || 'Application';
+const isProfFolder = path => !!path && !path.includes('/') && /professor|supervisor|faculty|\bPIs?\b/i.test(path);
+const filesOf = id => files.filter(f => f.app === id);
+const profsOf = id => items.filter(x => x.kind === 'professor' && x.application === id).sort(KINDS.professor.sort);
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const joinPath = (...p) => p.filter(Boolean).join('/');
+function fileIcon(f) {
+  const k = fileKind(f);
+  return icon({ pdf: 'pdf', image: 'img', md: 'note', text: 'note', doc: 'note', zip: 'zip' }[k] || 'file');
+}
+function folderTitle(name) {
+  const m = /^(\d+)[\s._-]+/.exec(name || '');
+  return `${m ? `<i class="fnum">${esc(m[1])}</i>` : ''}${esc(prettyFolder(name))}`;
+}
+
+function workspaceHTML(r) {
+  const a = byId[r.ws];
+  if (!a || a.kind !== 'application') {
+    return items.length ? `<div class="empty">${icon('phd')}<p>This application was not found. It may have been deleted on another device.</p>
+      <a class="btn" href="#/phd/application">Back to applications</a></div>` : '';
+  }
+  const own = filesOf(a.id);
+  const all = folderSet({ folders: appFolders(a) }, own);
+  return r.folder ? folderHTML(r, a, own, all) : wsRootHTML(r, a, own, all);
+}
+
+function crumbsHTML(a, folder) {
+  const parts = folder ? folder.split('/') : [];
+  const links = [`<a href="#/phd/application">${icon('back')}Applications</a>`];
+  if (folder) links.push(`<a href="${wsHref(a.id)}">${esc(a.folderName || a.title)}</a>`);
+  parts.slice(0, -1).forEach((p, i) => links.push(`<a href="${wsHref(a.id, parts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`));
+  return `<nav class="crumbs" aria-label="Folder path">${links.join('<span>/</span>')}</nav>`;
+}
+
+function tilesHTML(a, own, folders, extra = '') {
+  return `<div class="tiles">${folders.map(path => {
+    const n = underFolder(own, path).length;
+    const np = isProfFolder(path) ? profsOf(a.id).length : 0;
+    const sub = [n ? plural(n, 'file') : 'Empty', np ? `${np} professor${np > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+    return `<a class="tile" href="${wsHref(a.id, path)}" title="${esc(lastPart(path))}">
+      <span class="tileic">${icon('folder')}</span>
+      <span class="tilet">${folderTitle(lastPart(path))}</span>
+      <span class="tiles-s">${sub}</span></a>`;
+  }).join('')}${extra}</div>`;
+}
+
+function fileRowsHTML(list) {
+  if (!list.length) return '';
+  return `<ul class="rows big files">${list.map(f => `<li class="row file" style="--c:var(--phd)">
+    <span class="fic k-${fileKind(f)}">${fileIcon(f)}</span>
+    <button type="button" class="rowmain plain" data-act="openfile" data-id="${f.id}">
+      <span class="t">${esc(f.name)}</span>
+      <span class="s">${fmtSize(f.size)} · ${new Date(f.updatedAt || f.createdAt || Date.now()).toLocaleDateString()}</span>
+    </button>
+    <span class="tail">
+      <button type="button" class="iconbtn sm" data-act="dlfile" data-id="${f.id}" aria-label="Download ${esc(f.name)}">${icon('download')}</button>
+      <button type="button" class="iconbtn sm" data-act="fileinfo" data-id="${f.id}" aria-label="Rename, move or delete ${esc(f.name)}">${icon('more')}</button>
+    </span></li>`).join('')}</ul>`;
+}
+
+function uploadBtns(folder, opts = {}) {
+  return `<div class="btnrow uprow">
+    <label class="btn ${opts.primary ? 'primary' : ''}">${icon('upload')} Upload files<input type="file" multiple data-act="upfiles" data-folder="${esc(folder)}" hidden></label>
+    <button type="button" class="btn" data-act="newnote" data-folder="${esc(folder)}">${icon('note')} New note</button>
+    <button type="button" class="btn" data-act="newfolder" data-parent="${esc(folder)}">${icon('folderplus')} New folder</button>
+    ${canPickFolder ? `<label class="btn">${icon('folder')} ${opts.whole ? 'Upload the whole application folder' : 'Upload a folder'}<input type="file" webkitdirectory multiple data-act="${opts.whole ? 'upappfolder' : 'upsubfolder'}" data-folder="${esc(folder)}" hidden></label>` : ''}
+  </div>`;
+}
+
+function wsRootHTML(r, a, own, all) {
+  const K = KINDS.application;
+  const badge = K.badge(a), warn = K.warn(a), cal = K.calendar(a);
+  const profs = profsOf(a.id);
+  const contacted = profs.filter(p => p.status && p.status !== 'Not contacted').length;
+  const docs = (a.documents || []).length, docsAll = KINDS.application.fields.find(f => f.key === 'documents').options.length;
+  const portal = /^https?:\/\//.test(a.portal || '') ? a.portal : '';
+  const total = own.reduce((n, f) => n + (f.size || 0), 0);
+  const top = childFolders(all, '');
+  return `${crumbsHTML(a, '')}
+  <section class="card wshead">
+    <div class="wstop">
+      <span class="wsicon">${icon('folder')}</span>
+      <div class="wsmain">
+        <h2>${esc(a.title)}</h2>
+        <p>${badge ? `<span class="badge ${badgeClass(badge)}">${esc(badge)}</span> ` : ''}${esc([a.university, a.country].filter(Boolean).join(' · ')) || '<span class="muted small">Add the university, deadline and supervisor under Details.</span>'}</p>
+      </div>
+    </div>
+    <dl class="facts">
+      <div><dt>Deadline</dt><dd>${a.deadline ? esc(a.deadline) : '—'}${warn ? ` <span class="badge r">${esc(warn)}</span>` : ''}</dd></div>
+      <div><dt>Funding</dt><dd>${esc(a.funding || '—')}</dd></div>
+      <div><dt>Documents ready</dt><dd>${docs} of ${docsAll}</dd></div>
+      <div><dt>Professors</dt><dd>${profs.length ? `${profs.length} · ${contacted} contacted` : '—'}</dd></div>
+    </dl>
+    <div class="btnrow">
+      <a class="btn primary" href="${r.base}/~e/application/${a.id}">${icon('edit')} Details</a>
+      ${portal ? `<a class="btn" href="${esc(portal)}" target="_blank" rel="noopener">${icon('ext')} Portal</a>` : ''}
+      ${cal ? `<a class="btn" target="_blank" rel="noopener" href="${esc(calLink(cal))}">${icon('cal')} Deadline to Calendar</a>` : ''}
+      ${own.length ? `<button type="button" class="btn" data-act="zip" data-folder="">${icon('download')} Download all (.zip)</button>` : ''}
+    </div>
+  </section>
+  <h3 class="grouph">${esc(a.folderName || 'Folders')}</h3>
+  ${tilesHTML(a, own, top, `
+    <button type="button" class="tile readme" data-act="readme"><span class="tileic">${icon('note')}</span><span class="tilet">${esc(a.readmeName || 'README.md')}</span><span class="tiles-s">${a.notes ? 'Notes & checklist' : 'Empty — tap to write'}</span></button>
+    <button type="button" class="tile add" data-act="newfolder" data-parent=""><span class="tileic">${icon('folderplus')}</span><span class="tilet">New folder</span><span class="tiles-s">&nbsp;</span></button>`)}
+  ${inFolder(own, '').length ? `<h3 class="grouph">Files in this folder</h3>${fileRowsHTML(inFolder(own, ''))}` : ''}
+  ${uploadBtns('', { whole: true })}
+  <section class="card readmecard">
+    <div class="cardhead"><h3>${icon('note')} ${esc(a.readmeName || 'README.md')}</h3><button type="button" class="btn sm" data-act="readme">${icon('edit')} Edit</button></div>
+    ${a.notes ? `<div class="md">${mdToHtml(a.notes)}</div>` : `<p class="muted">Write what this application needs — requirements, steps, contacts, interview prep. Checklists work too: <code>- [ ] Send CV</code></p>`}
+  </section>
+  <p class="small muted">${own.length} file${own.length === 1 ? '' : 's'} · ${fmtSize(total)} · stored privately in your Google account and synced to all your devices.
+  ${canPickFolder ? 'Tip: drag files from your computer onto any folder to upload them.' : ''}</p>`;
+}
+
+function folderHTML(r, a, own, all) {
+  const path = r.folder;
+  if (!all.includes(path)) {
+    return `${crumbsHTML(a, path)}<div class="empty">${icon('folder')}<p>This folder no longer exists.</p><a class="btn" href="${wsHref(a.id)}">Back to ${esc(a.title)}</a></div>`;
+  }
+  const subs = childFolders(all, path);
+  const here = inFolder(own, path);
+  const profs = isProfFolder(path) ? profsOf(a.id) : null;
+  return `${crumbsHTML(a, path)}
+  <div class="folderhead">
+    <span class="wsicon">${icon('folder')}</span>
+    <div><h2>${folderTitle(lastPart(path))}</h2><p class="small muted">${esc(lastPart(path))} · ${plural(underFolder(own, path).length, 'file')}</p></div>
+  </div>
+  ${uploadBtns(path, { primary: true })}
+  ${profs ? `<section class="card">
+    <div class="cardhead"><h3>${icon('person')} Professors</h3><a class="btn sm" href="${r.base}/~e/professor/new">${icon('plus')} Add professor</a></div>
+    ${profs.length ? `<ul class="rows">${profs.map(p => rowHTML(p, 0, 0, `${r.base}/~e/professor/${p.id}`)).join('')}</ul>`
+      : `<p class="muted">Keep track of each professor: research focus, when you emailed, when to follow up, and what they replied.</p>`}
+  </section>` : ''}
+  ${subs.length ? tilesHTML(a, own, subs) : ''}
+  ${here.length ? fileRowsHTML(here) : (subs.length ? '' : `<div class="dropzone">${icon('upload')}<p>No files yet.<br>${canPickFolder ? 'Drag files here, or use <b>Upload files</b>.' : 'Tap <b>Upload files</b> to add PDFs, Word files, photos…'}</p></div>`)}
+  <div class="folderfoot">
+    ${underFolder(own, path).length ? `<button type="button" class="btn sm" data-act="zip" data-folder="${esc(path)}">${icon('download')} Download folder (.zip)</button>` : ''}
+    <button type="button" class="btn sm" data-act="renamefolder" data-folder="${esc(path)}">${icon('edit')} Rename folder</button>
+    <button type="button" class="btn sm danger" data-act="deletefolder" data-folder="${esc(path)}">${icon('trash')} Delete folder</button>
+  </div>`;
+}
+
+/* ---- folder changes ---- */
+function saveFolders(a, folders) {
+  store.save({ ...byId[a.id], folders: [...new Set(folders)].sort((x, y) => x.localeCompare(y, undefined, { numeric: true })) });
+}
+function newFolder(a, parent) {
+  const name = cleanName(prompt(parent ? `New folder inside “${lastPart(parent)}”:` : 'New folder name (e.g. 05_Interview):') || '');
+  if (!name) return;
+  const path = joinPath(parent, name);
+  if (folderSet({ folders: appFolders(a) }, filesOf(a.id)).some(p => p.toLowerCase() === path.toLowerCase())) return toast('A folder with that name already exists.', true);
+  saveFolders(a, [...appFolders(a), path]);
+  toast('Folder created');
+}
+function renameFolder(a, path) {
+  const name = cleanName(prompt('Rename folder:', lastPart(path)) || '');
+  if (!name || name === lastPart(path)) return;
+  const np = joinPath(parentOf(path), name);
+  const all = folderSet({ folders: appFolders(a) }, filesOf(a.id));
+  if (all.some(p => p.toLowerCase() === np.toLowerCase() && p !== path)) return toast('A folder with that name already exists.', true);
+  const move = p => (p === path || p.startsWith(path + '/')) ? np + p.slice(path.length) : p;
+  saveFolders(a, all.map(move));
+  underFolder(filesOf(a.id), path).forEach(f => store.updateFile(f.id, { folder: move(f.folder) }));
+  go(wsHref(a.id, np));
+  toast('Folder renamed');
+}
+function deleteFolder(a, path) {
+  const inside = underFolder(filesOf(a.id), path);
+  if (!confirm(inside.length ? `Delete “${lastPart(path)}” and the ${inside.length} file${inside.length > 1 ? 's' : ''} in it? This cannot be undone.` : `Delete the empty folder “${lastPart(path)}”?`)) return;
+  inside.forEach(f => store.deleteFile(f));
+  const all = folderSet({ folders: appFolders(a) }, filesOf(a.id));
+  saveFolders(a, all.filter(p => !(p === path || p.startsWith(path + '/'))));
+  go(wsHref(a.id, parentOf(path)));
+  toast('Folder deleted');
+}
+
+/* ---- uploads (one at a time, with a progress bar) ---- */
+let upQueue = Promise.resolve(), uploading = 0;
+addEventListener('beforeunload', e => { if (uploading) { e.preventDefault(); e.returnValue = ''; } });
+function upbar(text, frac) {
+  const el = app.querySelector('#upbar');
+  if (!el) return;
+  if (text == null) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<span>${esc(text)}</span>${frac == null ? '' : `<i style="width:${Math.round(Math.min(1, frac) * 100)}%"></i>`}`;
+}
+function queueUpload(appId, list) {
+  uploading++;
+  upQueue = upQueue.then(() => uploadMany(appId, list)).catch(e => toast(e.message, true)).finally(() => { uploading--; });
+  return upQueue;
+}
+async function uploadMany(appId, list) {
+  if (store.mode !== 'cloud') return toast('Sign in with Google to store files.', true);
+  const tooBig = list.filter(x => x.file.size > MAX_FILE);
+  list = list.filter(x => x.file.size <= MAX_FILE);
+  if (tooBig.length) toast(`Skipped ${tooBig.length} file${tooBig.length > 1 ? 's' : ''} over ${MAX_FILE / 1048576} MB: ${tooBig.map(x => x.name).slice(0, 3).join(', ')}`, true);
+  const totalBytes = list.reduce((n, x) => n + x.file.size, 0);
+  if (totalBytes > 150 * 1048576 && !confirm(`This uploads ${fmtSize(totalBytes)}. Your free Firebase plan holds about 1 GB in total. Continue?`)) return;
+  let doneBytes = 0, added = 0, replaced = 0, same = 0, failed = 0;
+  for (const [i, x] of list.entries()) {
+    const existing = files.find(f => f.app === appId && (f.folder || '') === x.folder && f.name.toLowerCase() === x.name.toLowerCase());
+    if (existing && existing.size === x.file.size && existing.lastModified && existing.lastModified === x.file.lastModified) { same++; doneBytes += x.file.size; continue; }
+    const label = `Uploading ${list.length > 1 ? `${i + 1} of ${list.length}: ` : ''}${x.name}`;
+    const prog = (sent, n) => upbar(label, totalBytes ? (doneBytes + x.file.size * sent / n) / totalBytes : 1);
+    prog(0, 1);
+    try {
+      const meta = { name: x.name, folder: x.folder, app: appId, type: x.file.type || '', lastModified: x.file.lastModified || null };
+      const res = existing ? await store.replaceFile({ ...existing, ...meta }, x.file, prog) : await store.putFile(x.file, meta, prog);
+      existing ? replaced++ : added++;
+      // Online: wait for each file to arrive before reading the next, so big folders don't fill the memory.
+      // Offline: everything is queued on this device and uploads by itself later.
+      if (navigator.onLine) await res.done;
+    } catch (e) { failed++; toast(e.message || `Could not upload ${x.name}`, true); }
+    doneBytes += x.file.size;
+  }
+  upbar(null);
+  const parts = [added && `${added} uploaded`, replaced && `${replaced} replaced with newer versions`, same && `${same} already there`, failed && `${failed} failed`].filter(Boolean);
+  if (parts.length) toast((navigator.onLine ? '' : 'Offline — saved on this device and will upload later. ') + parts.join(', '), !!failed);
+}
+
+async function importAppFolder(fileList, intoApp, mode) {
+  const m = mapFolderUpload(fileList);
+  if (!m.files.length && !m.readme) return toast('That folder is empty.', true);
+  const readmeText = m.readme ? await m.readme.text() : '';
+  if (mode === 'sub') {   // "Upload a folder" inside a folder: it becomes a sub-folder there
+    const base = joinPath(intoApp.folder, cleanName(m.top));
+    const list = m.files.map(x => ({ ...x, folder: joinPath(base, x.folder) }));
+    if (m.readme) list.push({ file: m.readme, folder: base, name: cleanName(m.readme.name) });
+    saveFolders(intoApp.app, [...appFolders(intoApp.app), base]);
+    return queueUpload(intoApp.app.id, list);
+  }
+  const topFolders = [...new Set(m.files.map(x => x.folder.split('/')[0]).filter(Boolean))];
+  let a = intoApp || items.find(x => x.kind === 'application' && (x.folderName || '').toLowerCase() === m.top.toLowerCase());
+  if (!a) {
+    if (!confirm(`Create the application “${prettyFolder(m.top)}” from this folder (${m.files.length} files)?\n\nYou can add the university, deadline and status afterwards under Details.`)) return;
+    a = {
+      id: newId(), kind: 'application', title: prettyFolder(m.top) || 'New application', status: 'Researching', documents: [],
+      folderName: m.top, folders: topFolders.length ? topFolders : APP_FOLDERS, notes: readmeText, readmeName: m.readme ? m.readme.name : undefined, createdAt: Date.now(),
+    };
+    store.save(a);
+    pendingOpen = a;
+    go(wsHref(a.id));
+  } else {
+    let notes = a.notes || '';
+    if (readmeText.trim() && readmeText.trim() !== notes.trim() && (!notes.trim() || confirm(`Replace the README of “${a.title}” with the ${m.readme.name} from this folder?`))) notes = readmeText;
+    store.save({ ...a, notes, folders: [...new Set([...appFolders(a), ...topFolders])], folderName: a.folderName || m.top, readmeName: a.readmeName || (m.readme && m.readme.name) || undefined });
+    if (route().ws !== a.id) go(wsHref(a.id));
+  }
+  if (m.skipped) toast(`Skipped ${m.skipped} hidden system file${m.skipped > 1 ? 's' : ''}`);
+  return queueUpload(a.id, m.files);
+}
+
+/* ---- opening, downloading, zipping ---- */
+async function fileBlob(f) {
+  upbar(`Opening ${f.name}…`);
+  try { return await store.readFile(f); }
+  finally { upbar(null); }
+}
+function saveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;   // always saved as a download, never run inside the app
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+async function downloadFile(f) {
+  try { saveBlob(await fileBlob(f), f.name); toast(`Downloaded ${f.name}`); }
+  catch (e) { toast(e.message, true); }
+}
+async function openFile(f) {
+  if (!viewable(f)) return downloadFile(f);
+  let blob;
+  try { blob = await fileBlob(f); } catch (e) { return toast(e.message, true); }
+  if (fileKind(f) === 'image') {
+    const url = URL.createObjectURL(new Blob([blob], { type: 'image/' + (extOf(f.name) === 'jpg' ? 'jpeg' : extOf(f.name)) }));
+    const v = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x>${icon('close')}</button><h2>${esc(f.name)}</h2>
+      <button type="button" class="btn" data-dl>${icon('download')} Download</button></div>
+      <div class="ovl-img"><img src="${url}" alt="${esc(f.name)}"></div>`, () => URL.revokeObjectURL(url));
+    v.querySelector('[data-dl]').onclick = () => saveBlob(blob, f.name);
+    return;
+  }
+  textOverlay({ title: f.name, text: await blob.text(), md: fileKind(f) === 'md',
+    onSave: async text => { const res = await store.replaceFile(f, new Blob([text], { type: f.type || 'text/plain' })); toast('Saved'); return res; },
+    onDownload: () => saveBlob(blob, f.name) });
+}
+async function zipDownload(a, folder) {
+  const own = filesOf(a.id);
+  const list = folder ? underFolder(own, folder) : own;
+  const root = folder ? lastPart(folder) : zipRoot(a);
+  const rel = f => (folder ? (f.folder || '').slice(folder.length).replace(/^\//, '') : (f.folder || ''));
+  const entries = [];
+  if (!folder && (a.notes || '').trim()) entries.push({ path: `${root}/${cleanName(a.readmeName || 'README.md')}`, data: a.notes });
+  const all = folderSet({ folders: appFolders(a) }, own).filter(p => !folder || p.startsWith(folder + '/'));
+  all.filter(p => !underFolder(own, p).length).forEach(p => entries.push({ path: `${root}/${folder ? p.slice(folder.length + 1) : p}`, dir: true }));
+  try {
+    for (const [i, f] of list.entries()) {
+      upbar(`Preparing zip: ${i + 1} of ${list.length}`, i / list.length);
+      const blob = await store.readFile(f);
+      entries.push({ path: [root, rel(f), f.name].filter(Boolean).join('/'), data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+    upbar('Packing…', 1);
+    saveBlob(new Blob([buildZip(entries)], { type: 'application/zip' }), `${root}.zip`);
+    toast(`Downloaded ${root}.zip (${list.length} files)`);
+  } catch (e) { toast(e.message, true); }
+  finally { upbar(null); }
+}
+async function zipAllApplications() {
+  const apps = items.filter(x => x.kind === 'application');
+  const entries = [];
+  const n = files.filter(f => byId[f.app]).length;
+  let k = 0;
+  try {
+    for (const a of apps) {
+      const root = 'PhD_Applications/' + zipRoot(a);
+      if ((a.notes || '').trim()) entries.push({ path: `${root}/${cleanName(a.readmeName || 'README.md')}`, data: a.notes });
+      for (const f of filesOf(a.id)) {
+        upbar(`Preparing zip: ${++k} of ${n}`, k / Math.max(1, n));
+        const blob = await store.readFile(f);
+        entries.push({ path: [root, f.folder, f.name].filter(Boolean).join('/'), data: new Uint8Array(await blob.arrayBuffer()) });
+      }
+    }
+    if (!entries.length) return toast('No PhD files yet.');
+    upbar('Packing…', 1);
+    saveBlob(new Blob([buildZip(entries)], { type: 'application/zip' }), `PhD_Applications_${today()}.zip`);
+    toast('Downloaded all PhD folders');
+  } catch (e) { toast(e.message, true); }
+  finally { upbar(null); }
+}
+
+/* ---- full-screen panels: file viewer, notes, file details ---- */
+function overlay(html, onClose) {
+  closeOverlays();
+  const el = document.createElement('div');
+  el.className = 'ovl';
+  el.innerHTML = `<div class="ovl-panel" role="dialog" aria-modal="true">${html}</div>`;
+  el._close = () => { el.remove(); document.body.classList.remove('noscroll'); onClose && onClose(); };
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-x]')) { if (!el._dirty || confirm('Discard your changes?')) el._close(); } });
+  document.body.appendChild(el);
+  document.body.classList.add('noscroll');
+  return el;
+}
+function closeOverlays() { document.querySelectorAll('.ovl').forEach(o => o._close ? o._close() : o.remove()); }
+addEventListener('hashchange', closeOverlays);
+
+function textOverlay({ title, text, md, onSave, onDownload, startEditing }) {
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button><h2>${esc(title)}</h2>
+      <span class="ovl-acts"></span></div><div class="ovl-body"></div>`);
+  const body = el.querySelector('.ovl-body'), acts = el.querySelector('.ovl-acts');
+  const view = () => {
+    el._dirty = false;
+    body.innerHTML = text.trim() ? (md ? `<div class="md">${mdToHtml(text)}</div>` : `<pre class="plain">${esc(text)}</pre>`) : '<p class="muted">Empty.</p>';
+    acts.innerHTML = `${onDownload ? `<button type="button" class="iconbtn" data-dl aria-label="Download">${icon('download')}</button>` : ''}<button type="button" class="btn primary" data-edit>${icon('edit')} Edit</button>`;
+    acts.querySelector('[data-edit]').onclick = edit;
+    if (onDownload) acts.querySelector('[data-dl]').onclick = onDownload;
+  };
+  const edit = () => {
+    body.innerHTML = `<textarea class="noteedit" spellcheck="true" aria-label="${esc(title)}">${esc(text)}</textarea>
+      ${md ? '<p class="small muted"># Heading · **bold** · - list · - [ ] checklist · [link](https://…)</p>' : ''}`;
+    acts.innerHTML = `<button type="button" class="btn" data-cancel>Cancel</button><button type="button" class="btn primary" data-save>Save</button>`;
+    const ta = body.querySelector('textarea');
+    ta.addEventListener('input', () => { el._dirty = true; });
+    ta.focus();
+    acts.querySelector('[data-cancel]').onclick = () => { if (!el._dirty || confirm('Discard your changes?')) view(); };
+    acts.querySelector('[data-save]').onclick = async () => {
+      try { await onSave(ta.value); text = ta.value; view(); }
+      catch (e) { toast(e.message, true); }
+    };
+  };
+  startEditing ? edit() : view();
+  return el;
+}
+
+function fileInfo(f) {
+  const a = byId[f.app];
+  if (!a) return;
+  const all = folderSet({ folders: appFolders(a) }, filesOf(a.id));
+  const el = overlay(`<div class="ovl-head"><button type="button" class="iconbtn" data-x aria-label="Close">${icon('close')}</button><h2>File</h2>
+      <button type="button" class="btn primary" data-save>Save</button></div>
+    <div class="ovl-body"><div class="fields">
+      <div class="fld"><label for="fi_name">Name</label><input id="fi_name" type="text" value="${esc(f.name)}"></div>
+      <div class="fld"><label for="fi_folder">Folder</label><select id="fi_folder">
+        <option value="">${esc(a.folderName || a.title)} (top level)</option>
+        ${all.map(p => `<option value="${esc(p)}" ${p === (f.folder || '') ? 'selected' : ''}>${esc(p.replace(/\//g, ' / '))}</option>`).join('')}
+      </select></div>
+      <p class="small muted">${fmtSize(f.size)} · added ${new Date(f.createdAt || Date.now()).toLocaleString()}${f.updatedAt && f.updatedAt !== f.createdAt ? ` · changed ${new Date(f.updatedAt).toLocaleString()}` : ''}</p>
+    </div>
+    <div class="sheet-foot">
+      <button type="button" class="btn" data-dl>${icon('download')} Download</button>
+      <label class="btn">${icon('upload')} Replace with new version<input type="file" data-rep hidden></label>
+      <button type="button" class="btn danger" data-del>${icon('trash')} Delete</button>
+    </div></div>`);
+  el.querySelector('[data-dl]').onclick = () => downloadFile(f);
+  el.querySelector('[data-save]').onclick = () => {
+    const name = cleanName(el.querySelector('#fi_name').value);
+    const folder = el.querySelector('#fi_folder').value;
+    if (!name) return toast('The file needs a name.', true);
+    if (files.some(x => x.id !== f.id && x.app === f.app && (x.folder || '') === folder && x.name.toLowerCase() === name.toLowerCase())) return toast('A file with that name is already in that folder.', true);
+    if (name !== f.name || folder !== (f.folder || '')) { store.updateFile(f.id, { name, folder }); toast(folder !== (f.folder || '') ? 'Moved' : 'Renamed'); }
+    el._close();
+  };
+  el.querySelector('[data-rep]').onchange = e => {
+    const nf = e.target.files[0];
+    if (!nf) return;
+    el._close();
+    queueUpload(f.app, [{ file: nf, folder: f.folder || '', name: f.name, replace: true }]);
+  };
+  el.querySelector('[data-del]').onclick = () => {
+    if (!confirm(`Delete “${f.name}”? This cannot be undone.`)) return;
+    store.deleteFile(f); el._close(); toast('File deleted');
+  };
+}
+
+async function newNote(a, folder) {
+  let name = cleanName(prompt('Name of the new note:', 'Notes') || '');
+  if (!name) return;
+  if (!/\.(md|txt)$/i.test(name)) name += '.md';
+  if (files.some(x => x.app === a.id && (x.folder || '') === folder && x.name.toLowerCase() === name.toLowerCase())) return toast('A file with that name is already here.', true);
+  const text = `# ${name.replace(/\.(md|txt)$/i, '')}\n\n`;
+  try {
+    const { id } = await store.putFile(new Blob([text], { type: 'text/markdown' }), { name, folder, app: a.id, type: 'text/markdown' });
+    let f = { id, name, folder, app: a.id, type: 'text/markdown', chunks: 1, size: new Blob([text]).size };
+    textOverlay({ title: name, text, md: /\.md$/i.test(name), startEditing: true,
+      onSave: async t => { f = files.find(x => x.id === id) || f; await store.replaceFile(f, new Blob([t], { type: 'text/markdown' })); toast('Note saved'); },
+      onDownload: () => downloadFile(files.find(x => x.id === id) || f) });
+  } catch (e) { toast(e.message, true); }
+}
+
+function editReadme(a) {
+  textOverlay({ title: a.readmeName || 'README.md', text: a.notes || '', md: true, startEditing: !a.notes,
+    onSave: async t => { store.save({ ...byId[a.id], notes: t }); toast('README saved'); } });
+}
+
+/* drag and drop files from the computer onto a folder (elsewhere a drop is ignored instead of leaving the app) */
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => e.preventDefault());
+app.addEventListener('dragover', e => { if (route().ws && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); app.classList.add('dragging'); } });
+app.addEventListener('dragleave', e => { if (!e.relatedTarget || !app.contains(e.relatedTarget)) app.classList.remove('dragging'); });
+app.addEventListener('drop', e => {
+  const r = route();
+  app.classList.remove('dragging');
+  if (!r.ws || !e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  const list = [...e.dataTransfer.files].filter(f => f.size || f.type).map(f => ({ file: f, folder: r.folder || '', name: cleanName(f.name) }));
+  if (!list.length) return toast('To upload a whole folder, use “Upload a folder”.', true);
+  queueUpload(r.ws, list);
+});
 
 /* ---------------- search ---------------- */
 function searchHTML() {
@@ -336,11 +824,16 @@ function searchResults() {
   const q = (ui.q || '').trim().toLowerCase();
   if (!q) return `<p class="muted pad">Type to search across all ${items.length} records.</p>`;
   const hits = items.filter(x => textOf(x).includes(q));
-  if (!hits.length) return `<p class="muted pad">No results for “${esc(ui.q)}”.</p>`;
+  const fhits = files.filter(f => byId[f.app] && (f.name + ' ' + (f.folder || '')).toLowerCase().includes(q));
+  const fileGroup = fhits.length ? `<h3 class="grouph">Files <span>${fhits.length}</span></h3><ul class="rows big files">${fhits.slice(0, 50).map(f => `<li class="row file" style="--c:var(--phd)">
+    <span class="fic k-${fileKind(f)}">${fileIcon(f)}</span>
+    <a class="rowmain" href="${wsHref(f.app, f.folder || '')}"><span class="t">${esc(f.name)}</span>
+    <span class="s">${esc([byId[f.app].title, (f.folder || '').replace(/\//g, ' / ')].filter(Boolean).join(' · '))}</span></a></li>`).join('')}</ul>` : '';
+  if (!hits.length && !fhits.length) return `<p class="muted pad">No results for “${esc(ui.q)}”.</p>`;
   const groups = {};
   hits.forEach(x => (groups[x.kind] ||= []).push(x));
   return Object.entries(groups).map(([k, list]) =>
-    `<h3 class="grouph">${KINDS[k].plural} <span>${list.length}</span></h3><ul class="rows big">${list.sort(KINDS[k].sort).map(rowHTML).join('')}</ul>`).join('');
+    `<h3 class="grouph">${KINDS[k].plural} <span>${list.length}</span></h3><ul class="rows big">${list.sort(KINDS[k].sort).map(rowHTML).join('')}</ul>`).join('') + fileGroup;
 }
 
 /* ---------------- settings ---------------- */
@@ -407,8 +900,10 @@ function settingsHTML() {
       <button class="btn" data-act="export">${icon('download')} Export data (.json)</button>
       <label class="btn">${icon('upload')} Import data<input type="file" accept="application/json,.json" data-act="import" hidden></label>
       <button class="btn" data-act="seed">Import CV &amp; projects</button>
+      ${files.length ? `<button class="btn" data-act="zipall">${icon('download')} Download all PhD folders (.zip)</button>` : ''}
     </div>
-    <p class="small muted">Exports include all records but not photos. The file contains your private notes — keep it somewhere only you can access.</p>
+    ${files.length ? `<p class="small muted">PhD files: ${files.length} · ${fmtSize(files.reduce((n, f) => n + (f.size || 0), 0))} of about 1 GB included free in your Firebase plan.</p>` : ''}
+    <p class="small muted">Exports include all records but not photos or files (download those as .zip). The file contains your private notes — keep it somewhere only you can access.</p>
   </section>
   <section class="card">
     <h3>About</h3>
@@ -428,9 +923,10 @@ function openEditorFromRoute() {
   if (isNew) {
     item = { id: newId(), kind: r.kind };
     K.fields.forEach(f => { if (f.default) item[f.key] = f.default(); });
+    if (r.ws && r.kind === 'professor') item.application = r.ws;
   } else {
     const src = byId[r.edit] || (pendingOpen && pendingOpen.id === r.edit ? pendingOpen : null);
-    if (!src) { if (items.length) go(`#/${r.section.id}/${r.kind}`); return; }
+    if (!src) { if (items.length) go(listHref(r)); return; }
     item = structuredClone(src);
   }
   editor = { kind: r.kind, item, isNew, newPhotos: [], removedPhotos: [], dirty: false, origUpdatedAt: item.updatedAt || null };
@@ -448,7 +944,7 @@ function closeEditor(fromRoute) {
   sheet.classList.remove('open');
   document.body.classList.remove('noscroll');
   setTimeout(() => { if (!editor) { sheet.hidden = true; sheet.innerHTML = ''; } }, 180);
-  if (!fromRoute) { const r = route(); go(`#/${r.section.id}/${r.kind}`); }
+  if (!fromRoute) go(listHref(route()));
 }
 
 function fieldHTML(f, item) {
@@ -591,12 +1087,17 @@ app.addEventListener('click', async e => {
       if (editor && editor.dirty && !confirm('Discard your changes?')) return;
       closeEditor();
       break;
-    case 'delete':
-      if (!confirm(`Delete this ${KINDS[editor.kind].label.toLowerCase()}? This cannot be undone.`)) return;
+    case 'delete': {
+      const own = editor.kind === 'application' ? files.filter(f => f.app === editor.item.id) : [];
+      if (!confirm(`Delete this ${KINDS[editor.kind].label.toLowerCase()}${own.length ? ` and its ${own.length} file${own.length > 1 ? 's' : ''}` : ''}? This cannot be undone.`)) return;
       (editor.item.photos || []).forEach(id => store.removePhoto(id));
+      own.forEach(f => store.deleteFile(f));
       store.remove(editor.item.id);
-      closeEditor(); toast('Deleted');
+      if (editor.kind === 'application' && r.ws) { editor = null; closeEditor(true); go('#/phd/application'); }
+      else closeEditor();
+      toast('Deleted');
       break;
+    }
     case 'duplicate': {
       const copy = readForm();
       const dup = { ...copy, id: newId(), title: copy.title + ' (copy)', photos: [], date: copy.date ? today() : copy.date, createdAt: Date.now() };
@@ -671,6 +1172,22 @@ app.addEventListener('click', async e => {
       break;
     }
     case 'seed': seedCV(); break;
+    case 'zipall': zipAllApplications(); break;
+  }
+  // PhD application folders
+  const a = r.ws && byId[r.ws];
+  if (!a) return;
+  const fid = t.dataset.id && files.find(f => f.id === t.dataset.id);
+  switch (act) {
+    case 'readme': editReadme(a); break;
+    case 'newfolder': newFolder(a, t.dataset.parent || ''); break;
+    case 'renamefolder': renameFolder(a, t.dataset.folder); break;
+    case 'deletefolder': deleteFolder(a, t.dataset.folder); break;
+    case 'zip': zipDownload(a, t.dataset.folder || ''); break;
+    case 'newnote': newNote(a, t.dataset.folder || ''); break;
+    case 'openfile': if (fid) openFile(fid); break;
+    case 'dlfile': if (fid) downloadFile(fid); break;
+    case 'fileinfo': if (fid) fileInfo(fid); break;
   }
 });
 
@@ -689,6 +1206,16 @@ app.addEventListener('change', async e => {
   } else if (t.dataset.act === 'import') {
     const f = t.files[0]; t.value = '';
     if (f) importData(f);
+  } else if (['upfiles', 'upappfolder', 'upsubfolder', 'importfolder'].includes(t.dataset.act)) {
+    const list = [...t.files], act = t.dataset.act, folder = t.dataset.folder || '';
+    t.value = '';
+    if (!list.length) return;
+    const r = route(), a = r.ws && byId[r.ws];
+    if (act === 'importfolder') return importAppFolder(list, null);
+    if (!a) return;
+    if (act === 'upappfolder') return importAppFolder(list, a);
+    if (act === 'upsubfolder') return importAppFolder(list, { app: a, folder }, 'sub');
+    queueUpload(a.id, list.map(f => ({ file: f, folder, name: cleanName(f.name) })));
   } else if (editor && t.closest('#edform')) editor.dirty = true;
 });
 
@@ -710,6 +1237,8 @@ app.addEventListener('input', e => {
 app.addEventListener('submit', e => { if (e.target.id === 'edform') { e.preventDefault(); saveEditor(); } });
 addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.querySelector('.viewer')) return document.querySelector('.viewer').remove();
+  const ov = document.querySelector('.ovl');
+  if (e.key === 'Escape' && ov) { if (!ov._dirty || confirm('Discard your changes?')) ov._close(); return; }
   if (e.key === 'Escape' && editor) { if (!editor.dirty || confirm('Discard your changes?')) closeEditor(); }
 });
 
@@ -786,8 +1315,16 @@ function mergePlan(list) {
       out.push(rec); added++;
     }
   }
-  for (const it of out) for (const f of KINDS[it.kind].fields)
-    if (f.type === 'ref' && it[f.key] && idMap[it[f.key]]) it[f.key] = idMap[it[f.key]];
+  // Links between records may be given as an id or as the exact title (e.g. a professor's application).
+  for (const it of out) for (const f of KINDS[it.kind].fields) {
+    const v = it[f.key];
+    if (f.type !== 'ref' || !v) continue;
+    if (idMap[v]) it[f.key] = idMap[v];
+    else if (!byId[v]) {
+      const hit = byKey.get(f.ref + '|' + norm(v)) || out.find(o => o.kind === f.ref && norm(o.title) === norm(v));
+      if (hit) it[f.key] = hit.id;
+    }
+  }
   return { out, del, added, completed, updated };
 }
 
@@ -906,6 +1443,7 @@ const CLAUDE_PROMPT = `Please turn my information below into data for my Researc
 Reply with ONE JSON code block only, shaped like {"items": [ ... ]}. Use only facts I give you — leave out anything unknown; never invent dates, names or numbers.
 Each item needs "kind" and "title", plus any of these fields (dates as YYYY-MM-DD):
 - application: university, country, status (Researching | Contacted supervisor | Preparing | Submitted | Interview | Offer | Accepted | Rejected | Declined), deadline, supervisor, supervisorEmail, funding, portal, documents (list from: CV, Statement of purpose, Research proposal, References, Transcripts, Language test, Publications, Portfolio / writing sample — only the ones already ready), notes
+- professor: application (exact title of the application, if known), status (Not contacted | Emailed | Follow-up sent | Replied | Meeting / interview | Positive | No position | No reply), institute, email, website, contacted (date first emailed), followUp (date), research, fit, notes
 - task: due, priority (Low | Medium | High), notes, done (true/false)
 - project: status (Idea | Active | On hold | Done), area (Wet lab | Computational | Both), progress (0-100), start, target, description
 - experiment: date, status (Planned | In progress | Completed | Failed | Repeated), objective, materials, procedure, results, conclusion

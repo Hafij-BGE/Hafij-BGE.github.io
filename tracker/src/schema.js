@@ -6,12 +6,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 export const SECTIONS = [
   { id: 'lab', label: 'Lab', kinds: ['experiment', 'protocol', 'inventory'] },
   { id: 'research', label: 'Research', kinds: ['project', 'task', 'paper'] },
-  { id: 'phd', label: 'PhD', kinds: ['application'] },
+  { id: 'phd', label: 'PhD', kinds: ['application', 'professor'] },
   { id: 'profile', label: 'Profile', kinds: ['publication', 'talk', 'award'] },
 ];
 
 export const APP_OPEN = ['Researching', 'Contacted supervisor', 'Preparing'];
 export const APP_STATUS = ['Researching', 'Contacted supervisor', 'Preparing', 'Submitted', 'Interview', 'Offer', 'Accepted', 'Rejected', 'Declined'];
+// Every application gets these folders to start with (the same layout as the owner's own PC folders).
+export const APP_FOLDERS = ['01_Program_Info', '02_My_Profile', '03_Professors', '04_Templates_General'];
+export const PROF_STATUS = ['Not contacted', 'Emailed', 'Follow-up sent', 'Replied', 'Meeting / interview', 'Positive', 'No position', 'No reply'];
 export const APP_DOCS = ['CV', 'Statement of purpose', 'Research proposal', 'References', 'Transcripts', 'Language test', 'Publications', 'Portfolio / writing sample'];
 
 export const KINDS = {
@@ -151,7 +154,35 @@ export const KINDS = {
       { key: 'funding', label: 'Funding / scholarship', type: 'text', placeholder: 'e.g. fully funded, DAAD, Marie Curie' },
       { key: 'portal', label: 'Application portal / ad link', type: 'url' },
       { key: 'documents', label: 'Documents ready', type: 'checklist', options: APP_DOCS },
-      { key: 'notes', label: 'Notes (requirements, contacts, interview prep)', type: 'textarea', rows: 5 },
+      { key: 'notes', label: 'README (requirements, steps, interview prep — shown at the top of the folder)', type: 'textarea', rows: 6 },
+      { key: 'tags', label: 'Tags', type: 'tags' },
+    ],
+  },
+  professor: {
+    label: 'Professor', plural: 'Professors', color: 'var(--phd)',
+    sort: (a, b) => profRank(a.status) - profRank(b.status) || (a.followUp || '9999').localeCompare(b.followUp || '9999') || (a.title || '').localeCompare(b.title || ''),
+    sub: (x, ctx) => [x.institute, ctx.title(x.application)].filter(Boolean).join(' · '),
+    badge: x => x.status,
+    warn: x => {
+      if (!x.followUp || !['Emailed', 'Follow-up sent'].includes(x.status)) return null;
+      const days = Math.round((new Date(x.followUp) - new Date(today())) / 864e5);
+      if (days < 0) return 'Follow up now';
+      if (days <= 3) return days === 0 ? 'Follow up today' : `Follow up in ${days} d`;
+      return null;
+    },
+    calendar: x => x.followUp && { date: x.followUp, title: 'Follow up with ' + x.title, details: [x.email, x.institute].filter(Boolean).join(' · ') },
+    fields: [
+      { key: 'title', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Prof. Dr. Anna Müller' },
+      { key: 'application', label: 'Application', type: 'ref', ref: 'application' },
+      { key: 'status', label: 'Contact status', type: 'select', options: PROF_STATUS, default: () => 'Not contacted' },
+      { key: 'institute', label: 'Institute / group', type: 'text' },
+      { key: 'email', label: 'Email', type: 'text' },
+      { key: 'website', label: 'Lab website', type: 'url' },
+      { key: 'contacted', label: 'First email sent', type: 'date' },
+      { key: 'followUp', label: 'Follow up on', type: 'date' },
+      { key: 'research', label: 'Research focus', type: 'textarea' },
+      { key: 'fit', label: 'Why this lab / talking points', type: 'textarea' },
+      { key: 'notes', label: 'Notes (replies, meeting notes)', type: 'textarea', rows: 4 },
       { key: 'tags', label: 'Tags', type: 'tags' },
     ],
   },
@@ -200,6 +231,7 @@ export const KINDS = {
 };
 
 function closed(x) { return ['Accepted', 'Rejected', 'Declined'].includes(x.status) ? 1 : 0; }
+function profRank(s) { return { Positive: 0, 'Meeting / interview': 1, Replied: 2, 'Follow-up sent': 3, Emailed: 4, 'Not contacted': 5, 'No reply': 6, 'No position': 7 }[s] ?? 5; }
 function statusRank(s) { return { Active: 0, Idea: 1, 'On hold': 2, Done: 3 }[s] ?? 4; }
 function prioRank(p) { return { High: 0, Medium: 1, Low: 2 }[p] ?? 3; }
 function readRank(s) { return { Reading: 0, 'To read': 1, Read: 2 }[s] ?? 3; }

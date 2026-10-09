@@ -251,3 +251,87 @@ code { font: .9em ui-monospace, Menlo, Consolas, monospace; }
 .grid2 > * { min-width: 0; }
 .card { min-width: 0; }
 .codebox { font: 600 1.05rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; padding: 12px 14px; margin: 6px 0 10px; border-radius: 10px; border: 1px dashed var(--dry); background: color-mix(in srgb, var(--dry) 7%, transparent); word-break: break-all; user-select: all; }
+
+/* ---------- PhD application folders ---------- */
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 12px; font-size: .9rem; }
+.crumbs a { display: inline-flex; align-items: center; gap: 2px; text-decoration: none; font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumbs a .ic { width: 18px; height: 18px; margin-left: -4px; }
+.crumbs span { color: var(--muted); }
+.wshead { border-top: 4px solid var(--phd); }
+.wstop, .folderhead { display: flex; align-items: center; gap: 12px; }
+.folderhead { margin: 2px 0 6px; }
+.wsicon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; flex: none; color: var(--phd); background: color-mix(in srgb, var(--phd) 13%, transparent); }
+.wsicon .ic { width: 26px; height: 26px; }
+.wsmain { flex: 1; min-width: 0; }
+.wstop h2, .folderhead h2 { margin: 0; font-size: 1.22rem; line-height: 1.25; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.wstop p, .folderhead p { margin: 2px 0 0; }
+.facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0 6px; }
+@media (min-width: 700px) { .facts { grid-template-columns: repeat(4, 1fr); } }
+.facts div { background: var(--field); border: 1px solid var(--rule); border-radius: 12px; padding: 9px 12px; min-width: 0; }
+.facts dt { font-size: .75rem; color: var(--muted); font-weight: 600; }
+.facts dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 0 14px; }
+@media (min-width: 620px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1100px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
+.tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px; min-width: 0; border-radius: 14px; border: 1px solid var(--rule); background: var(--card); color: var(--ink); text-decoration: none; text-align: left; cursor: pointer; font: inherit; box-shadow: 0 1px 2px var(--shadow); }
+.tile:hover { border-color: var(--phd); }
+.tileic { color: var(--phd); }
+.tileic .ic { width: 30px; height: 30px; }
+.tile.readme .tileic { color: var(--dry); }
+.tile.add { border-style: dashed; box-shadow: none; background: transparent; }
+.tile.add .tileic { color: var(--muted); }
+.tilet { font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.tiles-s { font-size: .8rem; color: var(--muted); }
+.fnum { font-style: normal; font-size: .72rem; font-weight: 700; color: var(--phd); background: color-mix(in srgb, var(--phd) 13%, transparent); border-radius: 6px; padding: 1px 6px; margin-right: 7px; vertical-align: 2px; }
+.cardhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.cardhead h3 { margin: 0; display: flex; align-items: center; gap: 8px; }
+.btn.sm { min-height: 34px; padding: 0 12px; font-size: .85rem; }
+.files .row { gap: 10px; }
+.fic { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; flex: none; color: var(--muted); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.fic.k-pdf { color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
+.fic.k-doc, .fic.k-md, .fic.k-text { color: var(--dry); background: color-mix(in srgb, var(--dry) 11%, transparent); }
+.fic.k-image { color: var(--wet); background: color-mix(in srgb, var(--wet) 11%, transparent); }
+.fic.k-sheet { color: var(--wet); } .fic.k-slides { color: var(--amber); }
+button.rowmain.plain { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; color: var(--ink); }
+.rowmain .t { overflow-wrap: anywhere; }
+.dropzone { text-align: center; padding: 34px 16px; margin: 6px 0 14px; border: 2px dashed var(--rule); border-radius: 16px; color: var(--muted); }
+.dropzone .ic { width: 34px; height: 34px; opacity: .6; }
+#app.dragging #view { outline: 3px dashed var(--phd); outline-offset: -8px; border-radius: 16px; }
+.folderfoot { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 6px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.readmecard { margin-top: 16px; }
+.md { overflow-wrap: anywhere; }
+.md h3, .md h4, .md h5, .md h6, .md h7, .md h8 { margin: 16px 0 6px; font-size: 1.05rem; }
+.md h3:first-child, .md h4:first-child { margin-top: 4px; }
+.md p { margin: 6px 0; } .md ul, .md ol { margin: 6px 0; padding-left: 1.3em; } .md li { margin: 2px 0; }
+.md li.task { list-style: none; margin-left: -1.3em; } .md li.task input { accent-color: var(--wet); }
+.md pre, pre.plain { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--field); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+pre.plain { margin: 0; background: transparent; border: 0; padding: 0; font-size: 14px; }
+.md blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--rule); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--rule); margin: 14px 0; }
+.mdtable { overflow-x: auto; margin: 8px 0; }
+.md table { border-collapse: collapse; font-size: .92rem; }
+.md th, .md td { border: 1px solid var(--rule); padding: 6px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--field); }
+/* upload / download progress */
+.upbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + 16px + env(safe-area-inset-bottom)); z-index: 60; width: min(520px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 10px 14px 12px; box-shadow: 0 10px 30px -10px var(--shadow); font-size: .88rem; font-weight: 600; overflow: hidden; }
+.upbar span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upbar i { position: absolute; left: 0; bottom: 0; height: 4px; background: var(--phd); transition: width .2s; }
+@media (min-width: 900px) { .upbar { bottom: 24px; left: calc(50% + 115px); } }
+/* full-screen panels (viewer, notes, file details) */
+.ovl { position: fixed; inset: 0; z-index: 70; background: rgba(10, 15, 20, .5); display: flex; }
+.ovl-panel { margin: auto; width: 100%; height: 100%; background: var(--paper); display: flex; flex-direction: column; }
+@media (min-width: 760px) { .ovl-panel { width: min(860px, 94vw); height: auto; max-height: 92vh; border-radius: 18px; overflow: hidden; box-shadow: 0 30px 80px -20px rgba(0,0,0,.45); } }
+.ovl-head { display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; background: var(--card); border-bottom: 1px solid var(--rule); }
+@media (min-width: 760px) { .ovl-head { padding-top: 12px; } }
+.ovl-head h2 { flex: 1; min-width: 0; margin: 0; font-size: 1.02rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovl-acts { display: flex; gap: 8px; align-items: center; }
+.ovl-body { overflow-y: auto; padding: 16px 18px calc(24px + env(safe-area-inset-bottom)); flex: 1; }
+.ovl-img { flex: 1; display: grid; place-items: center; overflow: auto; background: #0b0f13; padding: 10px; }
+.ovl-img img { max-width: 100%; max-height: 80vh; }
+.noteedit { width: 100%; min-height: 55vh; padding: 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--card); font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+.noteedit:focus { outline: none; border-color: var(--dry); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dry) 20%, transparent); }
+.ovl .fld input[type=text], .ovl .fld select { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--card); font-size: 1rem; }
+[hidden] { display: none !important; }
+.uprow { margin: 4px 0 16px; }
+.wsmain p .badge { margin-right: 6px; vertical-align: 1px; }
+@media (max-width: 420px) { .wsicon { width: 40px; height: 40px; border-radius: 12px; } .wsicon .ic { width: 22px; height: 22px; } }

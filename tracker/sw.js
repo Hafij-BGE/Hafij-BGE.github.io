@@ -1,6 +1,6 @@
 // Network first: when online you always get the newest app; offline, the saved copy is used.
 // Your records themselves are cached and synced by Firebase, not here.
-const CACHE = 'research-log-v10';
+const CACHE = 'research-log-v11';
 const SHELL = ['./', './index.html', './app.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
