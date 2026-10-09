@@ -200,6 +200,50 @@
 
   .contact { display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 1.05rem; }
 
+
+  /* ---------- Bench vs computer colour coding ---------- */
+  .tag { display: inline-block; width: .7em; height: .7em; border-radius: .15em; margin-right: .45em; vertical-align: .05em; }
+  .tag.wet { background: var(--polar); }
+  .tag.dry { background: var(--hydrophobic); }
+  .find.wet { border-left-color: var(--polar); }
+
+  .split { display: grid; gap: 22px; margin: 6px 0 4px; }
+  @media (min-width: 620px) { .split { grid-template-columns: 1fr 1fr; gap: 32px; } }
+  .split h3 { font-size: 1.05rem; margin-bottom: 6px; }
+  .split ul { margin: 0; padding-left: 1.1em; font-size: 1.02rem; }
+  .split li { margin-bottom: 4px; }
+
+  .feature-lead { font-size: 1.08rem; }
+
+  ol.steps { list-style: none; counter-reset: step; margin: 18px 0 8px; padding: 0; display: grid; gap: 0; }
+  ol.steps li { counter-increment: step; position: relative; padding: 0 0 18px 46px; }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 30px; height: 30px; border-radius: 6px;
+    display: grid; place-items: center;
+    background: var(--polar); color: #fff;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-size: .95rem;
+  }
+  ol.steps li::after {
+    content: ""; position: absolute; left: 14px; top: 34px; bottom: 4px; width: 2px; background: var(--rule);
+  }
+  ol.steps li:last-child::after { display: none; }
+  ol.steps b { display: block; font-weight: 600; line-height: 1.35; }
+  ol.steps span { color: var(--muted); font-size: .98rem; }
+  @media (min-width: 860px) {
+    ol.steps { grid-template-columns: repeat(3, 1fr); gap: 22px 28px; }
+    ol.steps li { padding: 40px 0 0 0; }
+    ol.steps li::after { left: 38px; right: -22px; top: 14px; bottom: auto; width: auto; height: 2px; }
+    ol.steps li:nth-child(3n)::after { display: none; }
+  }
+
+  .techniques { display: grid; gap: 16px 32px; margin-top: 8px; }
+  @media (min-width: 620px) { .techniques { grid-template-columns: 1fr 1fr; } }
+  .techniques h4 { margin: 0 0 2px; font-size: 1rem; font-weight: 600; }
+  .techniques p { margin: 0; font-size: 1rem; color: var(--ink); }
+  .subhead { margin: 30px 0 4px; font-size: 1.15rem; font-weight: 600; }
+
   footer { padding: 40px 0 56px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .95rem; }
 
   .theme-toggle {
@@ -238,14 +282,14 @@
         </h1>
 
         <p class="name-plain">Md. Hafijur Rahman</p>
-        <p class="role">MSc student in Biomedical Technology, Dokuz Eylül University, İzmir</p>
+        <p class="role">MSc student in Biomedical Technology, Dokuz Eylül University, İzmir.<br>Virology and vaccine development at the bench; immunopeptidomics and protein machine learning on the computer.</p>
         <p class="decode">Every letter of my name is a valid amino-acid code. J stands for leucine or isoleucine, the pair a mass spectrometer cannot tell apart.</p>
 
         <nav class="jump" aria-label="Sections">
           <a href="#about">About</a>
-          <a href="#research">Current research</a>
+          <a href="#bench">Bench work</a>
+          <a href="#computational">Computational work</a>
           <a href="#publications">Publications</a>
-          <a href="#projects">Earlier projects</a>
           <a href="#education">Education</a>
           <a href="#contact">Contact</a>
         </nav>
@@ -260,14 +304,74 @@
   <section id="about" aria-labelledby="about-h">
     <h2 id="about-h">About</h2>
     <div class="body">
-      <p>I work across experimental and computational biology. My lab background is in virology, vaccine development and molecular biology; my computational work covers molecular modelling, multi-omics analysis and deep learning. My current research focuses on deep learning–based prediction of protein–protein interactions.</p>
-      <p>My recent projects are preregistered where possible, log every decision, and keep withdrawn results on the record rather than quietly removing them.</p>
-      <p class="meta">Bengali (native), English (C1), Turkish (C1)</p>
+      <p>I work on both sides of biology. At the bench I have propagated and attenuated a wild virus isolate into a candidate vaccine and taken it through an animal trial. On the computer I build and audit models for immunopeptidomics and protein biology. My current research focuses on deep learning–based prediction of protein–protein interactions.</p>
+      <div class="split">
+        <div>
+          <h3><span class="tag wet" aria-hidden="true"></span>At the bench</h3>
+          <ul>
+            <li>Virus propagation and attenuation in embryonated eggs</li>
+            <li>Vaccine formulation, animal trials and antibody analysis</li>
+            <li>DNA/RNA extraction, microbial culture and biochemical testing</li>
+            <li><i>In vitro</i> testing of plant extracts</li>
+          </ul>
+        </div>
+        <div>
+          <h3><span class="tag dry" aria-hidden="true"></span>On the computer</h3>
+          <ul>
+            <li>Deep learning for peptide and protein data</li>
+            <li>Immunopeptidomics and mass-spectrometry reanalysis</li>
+            <li>Molecular docking and dynamics simulation</li>
+            <li>Multi-omics, statistics and reproducible pipelines</li>
+          </ul>
+        </div>
+      </div>
+      <p class="meta" style="margin-top:14px">Bengali (native), English (C1), Turkish (C1)</p>
     </div>
   </section>
 
-  <section id="research" aria-labelledby="research-h">
-    <h2 id="research-h">Current research</h2>
+  <section id="bench" aria-labelledby="bench-h">
+    <h2 id="bench-h"><span class="tag wet" aria-hidden="true"></span>Bench work</h2>
+    <div class="body">
+
+      <article class="project">
+        <h3>Developing an attenuated fowlpox vaccine from a wild isolate</h3>
+        <p class="meta">2023–2024, MSc thesis, Bangladesh Agricultural University (BAURES project)</p>
+        <p class="feature-lead">Starting from a wild fowlpox virus isolate, I attenuated the virus by serial passage, formulated it as a vaccine and tested it in chickens.</p>
+        <ol class="steps" aria-label="Vaccine development steps">
+          <li><b>Wild isolate</b><span>Starting material: a wild fowlpox virus isolate</span></li>
+          <li><b>Serial passage</b><span>Cultured in embryonated duck eggs over several passages to attenuate it</span></li>
+          <li><b>Confirmation</b><span>Virus identified and confirmed at every passage</span></li>
+          <li><b>Formulation</b><span>Attenuated virus formulated as a vaccine with an adjuvant</span></li>
+          <li><b>Animal trial</b><span>Vaccine trial in chickens</span></li>
+          <li><b>Antibody analysis</b><span>Antibody response analysed and reported</span></li>
+        </ol>
+        <p class="meta">Supervisors: Dr. Shahidul Haque and Dr. Md. Bahanur Rahman (project holder; Professor, Department of Microbiology and Hygiene)</p>
+      </article>
+
+      <article class="project">
+        <h3>CRISPR–microfluidic platform for point-of-care pathogen detection</h3>
+        <p>An integrated CRISPR and microfluidic platform for automated pathogen detection at the point of care, presented as an oral talk at DEUISGR 2025, Dokuz Eylül University (December 2025). Co-author: Ö. Cihanbeğendi.</p>
+      </article>
+
+      <article class="project">
+        <h3>Plant extracts against 15-lipoxygenase–mediated inflammation</h3>
+        <p>Two published studies pairing <i>in vitro</i> experiments with computational simulation: a methanolic extract of <i>Phyllanthus emblica</i> (amla) and the bioactivity of garlic (<i>Allium sativum</i>), both against 15-lipoxygenase–mediated inflammopathies (2023). See <a href="#publications">Publications</a>.</p>
+      </article>
+
+      <p class="subhead">Bench techniques</p>
+      <div class="techniques">
+        <div><h4>Virology</h4><p>Virus propagation in embryonated eggs, attenuation by serial passage, virus identification and confirmation</p></div>
+        <div><h4>Vaccines and immunology</h4><p>Vaccine formulation with adjuvant, vaccine trials in chickens, antibody analysis</p></div>
+        <div><h4>Molecular biology</h4><p>DNA and RNA extraction and quantification, general molecular biology techniques</p></div>
+        <div><h4>Microbiology</h4><p>Microbial culture and biochemical testing</p></div>
+        <div><h4><i>In vitro</i> studies</h4><p>Bioactivity testing of plant extracts</p></div>
+        <div><h4>Diagnostics</h4><p>CRISPR–microfluidic pathogen detection</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="computational" aria-labelledby="computational-h">
+    <h2 id="computational-h"><span class="tag dry" aria-hidden="true"></span>Computational work</h2>
     <div class="body">
 
       <article class="project">
@@ -291,6 +395,32 @@
         <p class="lock">Repository currently private; available on request.</p>
       </article>
 
+      <p class="subhead">Earlier <i>in silico</i> projects</p>
+      <ul class="dated" style="margin-top:12px">
+        <li>
+          <span class="yr">2021–22</span>
+          <div>
+            <span class="pub-title">Drug discovery against dengue virus targeting the NS2B/NS3 protein</span>
+            <p>Drug screening, identification of structural analogues, and <i>in silico</i> and statistical analysis. Supervisor: Khandker Khaldun Islam, Khulna University.</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">B.Sc.</span>
+          <div>
+            <span class="pub-title">Alzheimer's checkpoints and <i>Rauvolfia serpentina</i> phytochemicals against BACE1</span>
+            <p>Undergraduate thesis, Khulna University. Supervisors: Khandker Khaldun Islam, Dr. S M Abdul-Awal.</p>
+          </div>
+        </li>
+        <li>
+          <span class="yr">2021</span>
+          <div>
+            <span class="pub-title">Bioactive compounds blocking the α-dystroglycan receptor against Lassa virus</span>
+            <p>Designed the project framework and ran docking, ADMET, molecular dynamics simulation and statistical analysis.</p>
+          </div>
+        </li>
+      </ul>
+      <p class="subhead">Tools</p>
+      <p>Python, PyTorch, protein language models (ESM-2), MHCflurry and NetMHCpan, Jupyter and Google Colab, Docker, Git</p>
     </div>
   </section>
 
@@ -341,59 +471,6 @@
     </div>
   </section>
 
-  <section id="projects" aria-labelledby="projects-h">
-    <h2 id="projects-h">Earlier projects</h2>
-    <div class="body">
-      <ul class="dated">
-        <li>
-          <span class="yr">2023–24</span>
-          <div>
-            <span class="pub-title">Development of an attenuated fowlpox vaccine from a wild isolate</span>
-            <p>MSc thesis, Bangladesh Agricultural University (BAURES project). Passaged the virus in embryonated duck eggs for attenuation, confirmed it at every passage, formulated the vaccine with an adjuvant, and ran the chicken trial and antibody analysis.</p>
-            <p class="meta">Supervisors: Dr. Shahidul Haque, Dr. Md. Bahanur Rahman</p>
-          </div>
-        </li>
-        <li>
-          <span class="yr">2021–22</span>
-          <div>
-            <span class="pub-title">Drug discovery against dengue virus targeting the NS2B/NS3 protein: an <i>in silico</i> approach</span>
-            <p>Literature review, screening of available drugs, identification of structural analogues, and <i>in silico</i> and statistical analysis.</p>
-            <p class="meta">Supervisor: Khandker Khaldun Islam, Khulna University</p>
-          </div>
-        </li>
-        <li>
-          <span class="yr">B.Sc.</span>
-          <div>
-            <span class="pub-title"><i>In silico</i> investigation of checkpoints in Alzheimer's disease and the potential of <i>Rauvolfia serpentina</i> phytochemicals to block the BACE1 receptor</span>
-            <p>Undergraduate thesis, Khulna University.</p>
-            <p class="meta">Supervisors: Khandker Khaldun Islam, Dr. S M Abdul-Awal</p>
-          </div>
-        </li>
-        <li>
-          <span class="yr">2021</span>
-          <div>
-            <span class="pub-title">Target specificity of selective bioactive compounds in blocking the α-dystroglycan receptor to suppress Lassa virus infection</span>
-            <p>Designed the project framework and ran docking, ADMET, molecular dynamics simulation and statistical analysis.</p>
-          </div>
-        </li>
-      </ul>
-    </div>
-  </section>
-
-  <section id="skills" aria-labelledby="skills-h">
-    <h2 id="skills-h">Skills</h2>
-    <div class="body skills">
-      <div>
-        <h3>Computational</h3>
-        <p>Python, PyTorch, deep learning, protein language models (ESM-2), proteomics and immunopeptidomics, genomics, multi-omics, molecular docking and dynamics simulation, statistical analysis and visualisation, Docker, Git</p>
-      </div>
-      <div>
-        <h3>Laboratory</h3>
-        <p>Molecular biology techniques, microbial culture and biochemical testing, virus propagation and vaccine development, DNA/RNA extraction and quantification</p>
-      </div>
-    </div>
-  </section>
-
   <section id="education" aria-labelledby="edu-h">
     <h2 id="edu-h">Education</h2>
     <div class="body">
@@ -424,6 +501,17 @@
         <li>İzmir International Students Association: organising cultural and educational programmes for international students</li>
         <li>HELIX, Khulna University Biotech Club: Managing Director and ICT Advisor</li>
         <li>Blood donation campaigns (BADHAN), anti-corruption awareness (Sotota Songho) and Bangladesh Scouts</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="training" aria-labelledby="training-h">
+    <h2 id="training-h">Training</h2>
+    <div class="body">
+      <ul class="dated">
+        <li><span class="yr">2025</span><div>Seminar: Research and Career Development in Biomedical and Health Sciences, Izmir University of Economics and Dokuz Eylül University</div></li>
+        <li><span class="yr">2022</span><div>Seminar: Developing a Human Liver Cell Atlas Using Single-Nucleus RNA Sequencing and Spatial Transcriptomics</div></li>
+        <li><span class="yr">2022</span><div>Workshop: RNA-seq Data Analysis</div></li>
       </ul>
     </div>
   </section>
