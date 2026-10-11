@@ -509,3 +509,15 @@ body.has-pen .aiwrite { display: inline-grid; }
 body.has-pen .aiform { align-items: stretch; flex-wrap: wrap; }
 body.has-pen .aiform textarea { min-height: 150px; max-height: 45vh; font-size: 1.15rem; line-height: 1.6; flex-basis: 100%; order: -1; padding: 12px; border-radius: 12px; background: var(--field); }
 body.has-pen .aiform .btn.primary { margin-left: auto; min-width: 110px; }
+/* Ask AI: search online */
+.aiweb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.aiwebnote { flex-basis: 100%; margin: 0 !important; }
+.aisrc { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
+.aisrc summary { cursor: pointer; font-size: .82rem; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.aisrc summary .ic { width: 15px; height: 15px; }
+.aisrc ol { margin: 8px 0 0; padding-left: 1.4em; font-size: .88rem; }
+.aisrc li { margin: 0 0 8px; } .aisrc li > a { font-weight: 600; text-decoration: none; }
+.aisrc li > span { display: block; }
+.stype { font-weight: 600; } .stype.t-dataset { color: var(--wet); } .stype.t-wiki { color: var(--muted); } .stype.t-paper { color: var(--accent); }
+.srcadd { display: flex !important; gap: 12px; margin-top: 2px; }
+a.cite { font-size: .78em; font-weight: 700; text-decoration: none; vertical-align: super; line-height: 0; }

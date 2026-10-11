@@ -7,6 +7,7 @@ import {
 import { snapshot, seal, newLink, linkUrl, SITE_KINDS } from './share.js';
 import { LINK_TYPES, linkTypeLabel, guessLink, linkHref, formatRef, sameRef, lookupDoi, cleanDoi, parseBib, parseRis, parsePasted, toBib, toRis, dataStatement } from './refs.js';
 import { Pad, COLORS, PAPERS, emptyInk, encodeInk, decodeInk, pageImage, pageCanvas, pageHasInk } from './notepad.js';
+import { WEB_SOURCES, searchOnline, webText } from './websearch.js';
 import { PROVIDERS, askChain, listModels, pickDefault, aiState, restingUntil, clearRest, freeModels, parseDelimited, describe, describeText, fmtNum } from './ai.js';
 import { loadRepos, cachedRepos, repoFor, ago, GH_USER, repoReadme, repoCommits, repoNameFromUrl } from './github.js';
 import qrcode from 'qrcode-generator';
@@ -80,6 +81,7 @@ const I = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   github: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/>',
   pen: '<path d="M4 20l4-1L19 8a2.1 2.1 0 0 0-3-3L5 16z"/><path d="M14 7l3 3"/>',
   hl: '<path d="M9 11l-5 5v3h3l5-5"/><path d="M9 11l6-6 4 4-6 6z"/><path d="M14 20h6"/>',
   eraser: '<path d="M8 20h12M5.5 14.5l7-7a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 19H8z"/><path d="M9 11l5 5"/>',
@@ -1331,7 +1333,7 @@ function addRepoAsProject(name) {
 /* ---------------- Ask AI ---------------- */
 let aiCfg = null;
 const AI_KINDS_DEFAULT = ['project', 'article', 'task', 'application', 'professor', 'experiment', 'publication'];
-ui.ai = { msgs: [], kinds: null, priv: true, file: null, focus: null, busy: false, draft: '' };
+ui.ai = { msgs: [], kinds: null, priv: true, file: null, focus: null, busy: false, draft: '', web: false, webSrc: ['papers', 'data'] };
 async function loadAi() {
   try { aiCfg = { channels: [], ...((await store.getMeta('ai')) || {}) }; } catch (e) { aiCfg = { channels: [] }; }
   if (route().view === 'settings') renderAiCard();
@@ -1444,7 +1446,7 @@ function aiKinds() {
 }
 // Every page has its own conversation: the whole log ("global"), a section ("sec:lab"), or one folder ("ws:<id>").
 ui.chats = { global: ui.ai };
-const chatOf = scope => (ui.chats[scope] ||= { msgs: [], priv: true, file: null, busy: false, draft: '' });
+const chatOf = scope => (ui.chats[scope] ||= { msgs: [], priv: true, file: null, busy: false, draft: '', web: false, webSrc: ['papers', 'data'] });
 function currentScope(r = route()) {
   if (r.ws) return byId[r.ws] ? 'ws:' + r.ws : null;
   if (r.section) return 'sec:' + r.section.id;
@@ -1518,6 +1520,11 @@ function chatPanelHTML(scope, page) {
   <section class="card aictx">
     ${ctxTop}
     <label class="toggle"><input type="checkbox" data-act="ai-private" ${A.priv ? 'checked' : ''}> ${icon('lock')} Private — leave out notes${scope.startsWith('ws:') ? ' and the README' : ''}, emails, private records and raw data rows</label>
+    <div class="aiweb">
+      <label class="toggle"><input type="checkbox" data-act="ai-web" ${A.web ? 'checked' : ''}> ${icon('globe')} Search online</label>
+      ${A.web ? `<span class="aikinds">${Object.entries(WEB_SOURCES).map(([k, v]) => `<button type="button" class="chip ${A.webSrc.includes(k) ? 'on' : ''}" data-act="ai-websrc" data-k="${k}" aria-pressed="${A.webSrc.includes(k)}" title="${esc(v.via)}">${esc(v.label)}</button>`).join('')}</span>
+        <p class="small muted aiwebnote">Your question (not your records) is sent to ${esc(A.webSrc.map(k => WEB_SOURCES[k].via).join(', ') || 'no service — pick one')}. Answers cite the results as [1], [2]…</p>` : ''}
+    </div>
     ${A.file ? `<p class="aifile">${icon('file')} <b>${esc(A.file.name)}</b> <span class="muted small">${A.file.table ? `${A.file.desc.rows} rows × ${A.file.desc.cols.length} columns` : fmtSize(A.file.size)}</span>
       <button type="button" class="iconbtn sm" data-act="ai-unfile" aria-label="Remove file">${icon('close')}</button></p>` : ''}
   </section>
@@ -1550,13 +1557,25 @@ function aiMsgHTML(m, i) {
   }
   if (m.role === 'error') return `<div class="aimsg err"><b>${esc(m.text)}</b>${m.notes && m.notes.length ? `<ul class="small">${m.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
     <a href="#/settings" data-scroll="aiCard" class="small">Check AI channels</a></div>`;
-  return `<div class="aimsg bot"><div class="md">${mdToHtml(m.text)}</div>
+  const S = m.sources || [];
+  // Turn [1], [2] in the answer into links to the matching result (only results the app found).
+  const cited = S.length ? mdToHtml(m.text).replace(/\[(\d{1,2})\]/g, (all, n) => (S[n - 1] ? `<a class="cite" href="${esc(S[n - 1].url)}" target="_blank" rel="noopener" title="${esc(S[n - 1].title)}">[${n}]</a>` : all)) : mdToHtml(m.text);
+  const art = (m.scope || '').startsWith('ws:') && byId[m.scope.slice(3)] && byId[m.scope.slice(3)].kind === 'article';
+  const srcHTML = S.length ? `<details class="aisrc" ${S.length <= 6 ? 'open' : ''}><summary>${icon('globe')} ${S.length} source${S.length > 1 ? 's' : ''} found online${m.query ? ` for “${esc(m.query)}”` : ''}</summary>
+    <ol>${S.map((r, j) => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+      <span class="small muted">${esc([r.authors, r.venue, r.year].filter(Boolean).join(' · '))} · <span class="stype t-${r.type}">${r.type === 'dataset' ? 'Dataset' : r.type === 'wiki' ? 'Wikipedia' : 'Paper'} · ${esc(r.source)}</span></span>
+      <span class="srcadd">${r.type === 'paper' ? `<button type="button" class="linkbtn small" data-act="ai-src-add" data-i="${i}" data-j="${j}" data-to="paper">+ Reading list</button>` : ''}
+        ${art && r.type === 'paper' ? `<button type="button" class="linkbtn small" data-act="ai-src-add" data-i="${i}" data-j="${j}" data-to="ref">+ References</button>` : ''}
+        ${art && r.type === 'dataset' ? `<button type="button" class="linkbtn small" data-act="ai-src-add" data-i="${i}" data-j="${j}" data-to="link">+ Links</button>` : ''}</span></li>`).join('')}</ol>
+    ${m.webErrors && m.webErrors.length ? `<p class="small muted">Not reachable this time: ${esc(m.webErrors.join(', '))}.</p>` : ''}</details>`
+    : m.web ? `<p class="small muted">${icon('globe')} Nothing found online for “${esc(m.query || '')}”${m.webErrors && m.webErrors.length ? ` (not reachable: ${esc(m.webErrors.join(', '))})` : ''}.</p>` : '';
+  return `<div class="aimsg bot"><div class="md">${cited}</div>${srcHTML}
     <p class="aimeta">${icon('spark')} ${esc(m.channel)} · ${esc(m.model)}${m.notes && m.notes.length ? ` · <span title="${esc(m.notes.join('\n'))}">switched ${m.notes.length}×</span>` : ''}
       <button type="button" class="iconbtn sm" data-act="ai-copy" data-i="${i}" aria-label="Copy answer">${icon('copy')}</button></p>
     ${m.notes && m.notes.length ? `<p class="small muted aiswitch">${m.notes.map(esc).join(' · ')}</p>` : ''}</div>`;
 }
 
-function aiContext(scope) {
+function aiContext(scope, web) {
   const A = chatOf(scope), info = scopeInfo(scope);
   const src = A.priv ? info.pool : info.pool.map(x => ({ ...x, noShare: false }));
   const recs = snapshot(src, { kinds: info.kinds, hideNotes: A.priv }).map(({ id, updatedAt, ...r }) => r);
@@ -1575,7 +1594,10 @@ ${info.global ? '' : `This conversation is about: ${info.title}. You can see ${i
 ${A.priv ? 'Private mode: personal notes, READMEs, emails and raw data rows were left out on purpose.' : ''}
 RECORDS (${recs.length}, JSON):
 ${json}${cut}
-${info.extra ? '\n' + info.extra : ''}${fileTxt ? '\nDATA:\n' + fileTxt : ''}`;
+${info.extra ? '\n' + info.extra : ''}${fileTxt ? '\nDATA:\n' + fileTxt : ''}${web ? `
+WEB RESULTS (found online just now for “${web.query}”; numbered):
+${web.results.length ? webText(web.results) : '(nothing found)'}
+When you use a web result, cite it with its number in square brackets, like [2]. Only state facts that appear in the records, data or web results; if they do not answer the question, say so and suggest a better search. Do not list the sources again at the end — the app shows them.` : ''}`;
 }
 // Show a conversation again wherever it is open (the Ask AI page or the side panel).
 function refreshChat(scope, scroll) {
@@ -1595,15 +1617,22 @@ async function aiSend(scope, q) {
   refreshChat(scope, true);
   const history = A.msgs.filter(m => m.role === 'user' || m.role === 'bot').slice(-11, -1).map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
   A.abort = new AbortController();
+  let web = null;
   try {
-    const r = await askChain(aiCfg.channels, [{ role: 'system', content: aiContext(scope) }, ...history, { role: 'user', content: q.trim() }], {
+    if (A.web && A.webSrc.length) {
+      A.trying = 'Searching online…';
+      app.querySelectorAll(`.aipanel[data-scope="${CSS.escape(scope)}"] .aitry`).forEach(el => { el.textContent = A.trying; });
+      web = await searchOnline(q, A.webSrc, A.abort.signal);
+    }
+    const r = await askChain(aiCfg.channels, [{ role: 'system', content: aiContext(scope, web) }, ...history, { role: 'user', content: q.trim() }], {
       signal: A.abort.signal,
       onTry: (ch, notes) => {
         A.trying = `${notes.length ? 'Switching to' : 'Asking'} ${chName(ch)}…`;
         app.querySelectorAll(`.aipanel[data-scope="${CSS.escape(scope)}"] .aitry`).forEach(el => { el.textContent = A.trying; });
       },
     });
-    A.msgs.push({ role: 'bot', text: r.text, model: r.model, channel: chName(r.channel), notes: r.notes });
+    A.msgs.push({ role: 'bot', text: r.text, model: r.model, channel: chName(r.channel), notes: r.notes, scope,
+      ...(web ? { web: true, sources: web.results, query: web.query, webErrors: web.errors } : {}) });
   } catch (e) {
     if (e.name === 'AbortError') A.msgs.push({ role: 'error', text: 'Stopped.' });
     else A.msgs.push({ role: 'error', text: e.message, notes: e.notes });
@@ -1612,6 +1641,26 @@ async function aiSend(scope, q) {
     const shown = (scope === 'global' && route().view === 'ai') || ui.drawer === scope;
     refreshChat(scope, true);
     if (!shown) toast('Ask AI: answer ready');
+  }
+}
+// Keep something the AI found online: as a paper to read, or in the article's references/links.
+function addFoundSource(m, j, to) {
+  const r = m && m.sources && m.sources[j];
+  if (!r) return;
+  const a = (m.scope || '').startsWith('ws:') ? byId[m.scope.slice(3)] : null;
+  if (to === 'paper') {
+    if (items.some(x => x.kind === 'paper' && ((r.doi && (x.doi || '').toLowerCase().includes(r.doi)) || (x.title || '').toLowerCase() === r.title.toLowerCase()))) return toast('Already in your reading list.');
+    store.save({ kind: 'paper', title: r.title, authors: r.authors, year: Number(r.year) || null, journal: r.venue, doi: r.doi || r.url, status: 'To read', notes: 'Found online with Ask AI.', createdAt: Date.now() });
+    return toast('Added to your reading list');
+  }
+  if (!a) return;
+  if (to === 'ref') return addRefs(a, [{ title: r.title, authors: (r.authors || '').replace(/, et al\.$/, '').split(/\s*,\s*/).join('; '), journal: r.venue, year: String(r.year || ''), doi: r.doi, url: r.doi ? '' : r.url }]);
+  if (to === 'link') {
+    const links = [...(a.links || [])];
+    const url = r.doi ? `https://doi.org/${r.doi}` : r.url;
+    if (links.some(l => l.url === url || (r.accession && l.url === r.accession))) return toast('That link is already saved.');
+    links.push({ id: newId(), type: r.accession ? 'accession' : 'dataset', url: r.accession || url, label: r.title.slice(0, 80), note: r.venue || undefined });
+    saveArticle(a, { links }, 'Added to the article\'s links');
   }
 }
 function aiAttachText(scope, name, text, size) {
@@ -2243,6 +2292,14 @@ app.addEventListener('click', async e => {
     case 'pad-penonly': if (P && P.pad) { P.pad.penOnly = t.checked; if (t.checked) markPen(); else { penSeen = false; try { localStorage.removeItem('rl.penSeen'); } catch (err) {} document.body.classList.remove('has-pen'); } } break;
     case 'ai-close': closeDrawer(); break;
     case 'ai-full': { const sc = ui.drawer; closeDrawer(); if (sc && sc.startsWith('ws:')) ui.ai.focus = sc.slice(3); break; }
+    case 'ai-web': case 'ai-websrc': case 'ai-src-add': {
+      const scope = (t.closest('[data-scope]') || {}).dataset?.scope || 'global', A = chatOf(scope);
+      if (act === 'ai-web') A.web = t.checked;
+      if (act === 'ai-websrc') A.webSrc = A.webSrc.includes(t.dataset.k) ? A.webSrc.filter(k => k !== t.dataset.k) : [...A.webSrc, t.dataset.k];
+      if (act === 'ai-src-add') { addFoundSource(A.msgs[Number(t.dataset.i)], Number(t.dataset.j), t.dataset.to); break; }
+      refreshChat(scope);
+      break;
+    }
     case 'ai-private': case 'ai-unfile': case 'ai-stop': case 'ai-clear': case 'ai-copy': case 'ai-hint': {
       const scope = (t.closest('[data-scope]') || {}).dataset?.scope || 'global', A = chatOf(scope);
       if (act === 'ai-private') { A.priv = t.checked; if (!t.checked) toast('Private is off: notes, READMEs and raw data rows will be sent to the AI provider', true); }
